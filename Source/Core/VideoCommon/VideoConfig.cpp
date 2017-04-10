@@ -37,6 +37,7 @@ VideoConfig::VideoConfig()
 
   // disable all features by default
   backend_info.api_type = APIType::Nothing;
+  backend_info.MaxTextureSize = 16384;
   backend_info.bSupportsExclusiveFullscreen = false;
   backend_info.bSupportsMultithreading = false;
   backend_info.bSupportsInternalResolutionFrameDumps = false;
@@ -80,6 +81,7 @@ void VideoConfig::Load(const std::string& ini_file)
   settings->Get("DumpPath", &sDumpPath, "");
   settings->Get("BitrateKbps", &iBitrateKbps, 2500);
   settings->Get("InternalResolutionFrameDumps", &bInternalResolutionFrameDumps, false);
+  settings->Get("EnableGPUTextureDecoding", &bEnableGPUTextureDecoding, false);
   settings->Get("EnablePixelLighting", &bEnablePixelLighting, false);
   settings->Get("FastDepthCalc", &bFastDepthCalc, true);
   settings->Get("MSAA", &iMultisamples, 1);
@@ -118,10 +120,12 @@ void VideoConfig::Load(const std::string& ini_file)
   IniFile::Section* hacks = iniFile.GetOrCreateSection("Hacks");
   hacks->Get("EFBAccessEnable", &bEFBAccessEnable, true);
   hacks->Get("BBoxEnable", &bBBoxEnable, false);
+  hacks->Get("BBoxPreferStencilImplementation", &bBBoxPreferStencilImplementation, false);
   hacks->Get("ForceProgressive", &bForceProgressive, true);
   hacks->Get("EFBToTextureEnable", &bSkipEFBCopyToRam, true);
   hacks->Get("EFBScaledCopy", &bCopyEFBScaled, true);
   hacks->Get("EFBEmulateFormatChanges", &bEFBEmulateFormatChanges, false);
+  hacks->Get("VertexRounding", &bVertexRounding, false);
 
   // hacks which are disabled by default
   iPhackvalue[0] = 0;
@@ -225,6 +229,7 @@ void VideoConfig::GameIniLoad()
   CHECK_SETTING("Video_Hacks", "EFBToTextureEnable", bSkipEFBCopyToRam);
   CHECK_SETTING("Video_Hacks", "EFBScaledCopy", bCopyEFBScaled);
   CHECK_SETTING("Video_Hacks", "EFBEmulateFormatChanges", bEFBEmulateFormatChanges);
+  CHECK_SETTING("Video_Hacks", "VertexRounding", bVertexRounding);
 
   CHECK_SETTING("Video", "ProjectionHack", iPhackvalue[0]);
   CHECK_SETTING("Video", "PH_SZNear", iPhackvalue[1]);
@@ -303,6 +308,7 @@ void VideoConfig::Save(const std::string& ini_file)
   settings->Set("DumpPath", sDumpPath);
   settings->Set("BitrateKbps", iBitrateKbps);
   settings->Set("InternalResolutionFrameDumps", bInternalResolutionFrameDumps);
+  settings->Set("EnableGPUTextureDecoding", bEnableGPUTextureDecoding);
   settings->Set("EnablePixelLighting", bEnablePixelLighting);
   settings->Set("FastDepthCalc", bFastDepthCalc);
   settings->Set("MSAA", iMultisamples);
@@ -341,10 +347,12 @@ void VideoConfig::Save(const std::string& ini_file)
   IniFile::Section* hacks = iniFile.GetOrCreateSection("Hacks");
   hacks->Set("EFBAccessEnable", bEFBAccessEnable);
   hacks->Set("BBoxEnable", bBBoxEnable);
+  hacks->Set("BBoxPreferStencilImplementation", bBBoxPreferStencilImplementation);
   hacks->Set("ForceProgressive", bForceProgressive);
   hacks->Set("EFBToTextureEnable", bSkipEFBCopyToRam);
   hacks->Set("EFBScaledCopy", bCopyEFBScaled);
   hacks->Set("EFBEmulateFormatChanges", bEFBEmulateFormatChanges);
+  hacks->Set("VertexRounding", bVertexRounding);
 
   iniFile.Save(ini_file);
 }

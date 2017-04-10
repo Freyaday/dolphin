@@ -36,8 +36,8 @@
 #include "VideoCommon/VideoConfig.h"
 
 static const u64 TEXHASH_INVALID = 0;
-static const int TEXTURE_KILL_THRESHOLD =
-    64;  // Sonic the Fighters (inside Sonic Gems Collection) loops a 64 frames animation
+// Sonic the Fighters (inside Sonic Gems Collection) loops a 64 frames animation
+static const int TEXTURE_KILL_THRESHOLD = 64;
 static const int TEXTURE_POOL_KILL_THRESHOLD = 3;
 static const int FRAMECOUNT_INVALID = 0;
 
@@ -110,7 +110,8 @@ void TextureCacheBase::OnConfigChanged(VideoConfig& config)
   if (config.iSafeTextureCache_ColorSamples != backup_config.color_samples ||
       config.bTexFmtOverlayEnable != backup_config.texfmt_overlay ||
       config.bTexFmtOverlayCenter != backup_config.texfmt_overlay_center ||
-      config.bHiresTextures != backup_config.hires_textures)
+      config.bHiresTextures != backup_config.hires_textures ||
+      config.bEnableGPUTextureDecoding != backup_config.gpu_texture_decoding)
   {
     Invalidate();
 
@@ -209,6 +210,7 @@ void TextureCacheBase::SetBackupConfig(const VideoConfig& config)
   backup_config.cache_hires_textures = config.bCacheHiresTextures;
   backup_config.stereo_3d = config.iStereoMode > 0;
   backup_config.efb_mono_depth = config.bStereoEFBMonoDepth;
+  backup_config.gpu_texture_decoding = config.bEnableGPUTextureDecoding;
 }
 
 TextureCacheBase::TCacheEntryBase* TextureCacheBase::ApplyPaletteToEntry(TCacheEntryBase* entry,
@@ -242,7 +244,7 @@ void TextureCacheBase::ScaleTextureCacheEntryTo(TextureCacheBase::TCacheEntryBas
     return;
   }
 
-  u32 max = g_renderer->GetMaxTextureSize();
+  const u32 max = g_ActiveConfig.backend_info.MaxTextureSize;
   if (max < new_width || max < new_height)
   {
     ERROR_LOG(VIDEO, "Texture too big, width = %d, height = %d", new_width, new_height);
@@ -437,7 +439,7 @@ TextureCacheBase::DoPartialTextureUpdates(TCacheEntryBase* entry_to_update, u8* 
 
 void TextureCacheBase::DumpTexture(TCacheEntryBase* entry, std::string basename, unsigned int level)
 {
-  std::string szDir = File::GetUserPath(D_DUMPTEXTURES_IDX) + SConfig::GetInstance().m_strGameID;
+  std::string szDir = File::GetUserPath(D_DUMPTEXTURES_IDX) + SConfig::GetInstance().GetGameID();
 
   // make sure that the directory exists
   if (!File::Exists(szDir) || !File::IsDirectory(szDir))
@@ -472,16 +474,16 @@ TextureCacheBase::TCacheEntryBase* TextureCacheBase::ReturnEntry(unsigned int st
 
 void TextureCacheBase::BindTextures()
 {
-  for (int i = 0; i < 8; ++i)
+  for (size_t i = 0; i < bound_textures.size(); ++i)
   {
     if (bound_textures[i])
-      bound_textures[i]->Bind(i);
+      bound_textures[i]->Bind(static_cast<u32>(i));
   }
 }
 
 void TextureCacheBase::UnbindTextures()
 {
-  std::fill(std::begin(bound_textures), std::end(bound_textures), nullptr);
+  bound_textures.fill(nullptr);
 }
 
 TextureCacheBase::TCacheEntryBase* TextureCacheBase::Load(const u32 stage)
@@ -526,6 +528,7 @@ TextureCacheBase::TCacheEntryBase* TextureCacheBase::Load(const u32 stage)
 
   const u32 texture_size =
       TexDecoder_GetTextureSizeInBytes(expandedWidth, expandedHeight, texformat);
+  u32 bytes_per_block = (bsw * bsh * TexDecoder_GetTexelSizeInNibbles(texformat)) / 2;
   u32 additional_mips_size = 0;  // not including level 0, which is texture_size
 
   // GPUs don't like when the specified mipmap count would require more than one 1x1-sized LOD in
@@ -755,6 +758,17 @@ TextureCacheBase::TCacheEntryBase* TextureCacheBase::Load(const u32 stage)
   // how many levels the allocated texture shall have
   const u32 texLevels = hires_tex ? (u32)hires_tex->m_levels.size() : tex_levels;
 
+  // We can decode on the GPU if it is a supported format and the flag is enabled.
+  // Currently we don't decode RGBA8 textures from Tmem, as that would require copying from both
+  // banks, and if we're doing an copy we may as well just do the whole thing on the CPU, since
+  // there's no conversion between formats. In the future this could be extended with a separate
+  // shader, however.
+  bool decode_on_gpu =
+      !hires_tex && g_ActiveConfig.UseGPUTextureDecoding() &&
+      g_texture_cache->SupportsGPUTextureDecode(static_cast<TextureFormat>(texformat),
+                                                static_cast<TlutFormat>(tlutfmt)) &&
+      !(from_tmem && texformat == GX_TF_RGBA8);
+
   // create the entry/texture
   TCacheEntryConfig config;
   config.width = width;
@@ -767,11 +781,22 @@ TextureCacheBase::TCacheEntryBase* TextureCacheBase::Load(const u32 stage)
   if (!entry)
     return nullptr;
 
-  if (!hires_tex)
+  const u8* tlut = &texMem[tlutaddr];
+  if (hires_tex)
+  {
+    entry->Load(temp, width, height, expandedWidth, 0);
+  }
+  else if (decode_on_gpu)
+  {
+    u32 row_stride = bytes_per_block * (expandedWidth / bsw);
+    g_texture_cache->DecodeTextureOnGPU(
+        entry, 0, src_data, texture_size, static_cast<TextureFormat>(texformat), width, height,
+        expandedWidth, expandedHeight, row_stride, tlut, static_cast<TlutFormat>(tlutfmt));
+  }
+  else
   {
     if (!(texformat == GX_TF_RGBA8 && from_tmem))
     {
-      const u8* tlut = &texMem[tlutaddr];
       TexDecoder_Decode(temp, src_data, expandedWidth, expandedHeight, texformat, tlut,
                         (TlutFormat)tlutfmt);
     }
@@ -781,6 +806,8 @@ TextureCacheBase::TCacheEntryBase* TextureCacheBase::Load(const u32 stage)
           &texMem[bpmem.tex[stage / 4].texImage2[stage % 4].tmem_odd * TMEM_LINE_SIZE];
       TexDecoder_DecodeRGBA8FromTmem(temp, src_data, src_data_gb, expandedWidth, expandedHeight);
     }
+
+    entry->Load(temp, width, height, expandedWidth, 0);
   }
 
   iter = textures_by_address.emplace(address, entry);
@@ -796,9 +823,6 @@ TextureCacheBase::TCacheEntryBase* TextureCacheBase::Load(const u32 stage)
   entry->SetHashes(base_hash, full_hash);
   entry->is_efb_copy = false;
   entry->is_custom_tex = hires_tex != nullptr;
-
-  // load texture
-  entry->Load(temp, width, height, expandedWidth, 0);
 
   std::string basename = "";
   if (g_ActiveConfig.bDumpTextures && !hires_tex)
@@ -840,13 +864,25 @@ TextureCacheBase::TCacheEntryBase* TextureCacheBase::Load(const u32 stage)
       const u32 expanded_mip_height = Common::AlignUp(mip_height, bsh);
 
       const u8*& mip_src_data = from_tmem ? ((level % 2) ? ptr_odd : ptr_even) : src_data;
-      const u8* tlut = &texMem[tlutaddr];
-      TexDecoder_Decode(temp, mip_src_data, expanded_mip_width, expanded_mip_height, texformat,
-                        tlut, (TlutFormat)tlutfmt);
-      mip_src_data +=
+      size_t mip_size =
           TexDecoder_GetTextureSizeInBytes(expanded_mip_width, expanded_mip_height, texformat);
 
-      entry->Load(temp, mip_width, mip_height, expanded_mip_width, level);
+      if (decode_on_gpu)
+      {
+        u32 row_stride = bytes_per_block * (expanded_mip_width / bsw);
+        g_texture_cache->DecodeTextureOnGPU(entry, level, mip_src_data, mip_size,
+                                            static_cast<TextureFormat>(texformat), mip_width,
+                                            mip_height, expanded_mip_width, expanded_mip_height,
+                                            row_stride, tlut, static_cast<TlutFormat>(tlutfmt));
+      }
+      else
+      {
+        TexDecoder_Decode(temp, mip_src_data, expanded_mip_width, expanded_mip_height, texformat,
+                          tlut, (TlutFormat)tlutfmt);
+        entry->Load(temp, mip_width, mip_height, expanded_mip_width, level);
+      }
+
+      mip_src_data += mip_size;
 
       if (g_ActiveConfig.bDumpTextures)
         DumpTexture(entry, basename, level);
@@ -1374,9 +1410,11 @@ TextureCacheBase::FindMatchingTextureFromPool(const TCacheEntryConfig& config)
   // Find a texture from the pool that does not have a frameCount of FRAMECOUNT_INVALID.
   // This prevents a texture from being used twice in a single frame with different data,
   // which potentially means that a driver has to maintain two copies of the texture anyway.
+  // Render-target textures are fine through, as they have to be generated in a seperated pass.
+  // As non-render-target textures are usually static, this should not matter much.
   auto range = texture_pool.equal_range(config);
   auto matching_iter = std::find_if(range.first, range.second, [](const auto& iter) {
-    return iter.second->frameCount != FRAMECOUNT_INVALID;
+    return iter.first.rendertarget || iter.second->frameCount != FRAMECOUNT_INVALID;
   });
   return matching_iter != range.second ? matching_iter : texture_pool.end();
 }

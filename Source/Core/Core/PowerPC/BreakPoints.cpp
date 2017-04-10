@@ -5,6 +5,7 @@
 #include "Core/PowerPC/BreakPoints.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -201,16 +202,11 @@ void MemChecks::Remove(u32 address)
   }
 }
 
-TMemCheck* MemChecks::GetMemCheck(u32 address)
+TMemCheck* MemChecks::GetMemCheck(u32 address, size_t size)
 {
   for (TMemCheck& mc : m_mem_checks)
   {
-    if (mc.is_ranged)
-    {
-      if (address >= mc.start_address && address <= mc.end_address)
-        return &mc;
-    }
-    else if (mc.start_address == address)
+    if (mc.end_address >= address && address + size - 1 >= mc.start_address)
     {
       return &mc;
     }
@@ -239,16 +235,17 @@ bool MemChecks::OverlapsMemcheck(u32 address, u32 length)
   return false;
 }
 
-bool TMemCheck::Action(DebugInterface* debug_interface, u32 value, u32 addr, bool write, int size,
-                       u32 pc)
+bool TMemCheck::Action(DebugInterface* debug_interface, u32 value, u32 addr, bool write,
+                       size_t size, u32 pc)
 {
   if ((write && is_break_on_write) || (!write && is_break_on_read))
   {
     if (log_on_hit)
     {
-      NOTICE_LOG(MEMMAP, "MBP %08x (%s) %s%i %0*x at %08x (%s)", pc,
+      NOTICE_LOG(MEMMAP, "MBP %08x (%s) %s%zu %0*x at %08x (%s)", pc,
                  debug_interface->GetDescription(pc).c_str(), write ? "Write" : "Read", size * 8,
-                 size * 2, value, addr, debug_interface->GetDescription(addr).c_str());
+                 static_cast<int>(size * 2), value, addr,
+                 debug_interface->GetDescription(addr).c_str());
     }
     if (break_on_hit)
       return true;

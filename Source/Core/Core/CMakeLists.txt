@@ -24,6 +24,10 @@ set(SRCS
   Boot/Boot_ELF.cpp
   Boot/Boot_WiiWAD.cpp
   Boot/ElfReader.cpp
+  ConfigLoaders/BaseConfigLoader.cpp
+  ConfigLoaders/GameConfigLoader.cpp
+  ConfigLoaders/MovieConfigLoader.cpp
+  ConfigLoaders/NetPlayConfigLoader.cpp
   Debugger/Debugger_SymbolMap.cpp
   Debugger/Dump.cpp
   Debugger/PPCDebugInterface.cpp
@@ -85,8 +89,10 @@ set(SRCS
   HW/DSPLLE/DSPLLEGlobals.cpp
   HW/DSPLLE/DSPLLE.cpp
   HW/DSPLLE/DSPLLETools.cpp
-  HW/DVDInterface.cpp
-  HW/DVDThread.cpp
+  HW/DVD/DVDInterface.cpp
+  HW/DVD/DVDMath.cpp
+  HW/DVD/DVDThread.cpp
+  HW/DVD/FileMonitor.cpp
   HW/EXI/EXI_Channel.cpp
   HW/EXI/EXI.cpp
   HW/EXI/EXI_Device.cpp
@@ -100,9 +106,9 @@ set(SRCS
   HW/EXI/EXI_DeviceMic.cpp
   HW/GCKeyboard.cpp
   HW/GCKeyboardEmu.cpp
-  HW/GCMemcard.cpp
-  HW/GCMemcardDirectory.cpp
-  HW/GCMemcardRaw.cpp
+  HW/GCMemcard/GCMemcard.cpp
+  HW/GCMemcard/GCMemcardDirectory.cpp
+  HW/GCMemcard/GCMemcardRaw.cpp
   HW/GCPad.cpp
   HW/GCPadEmu.cpp
   HW/GPFifo.cpp
@@ -145,6 +151,12 @@ set(SRCS
   IOS/DI/DI.cpp
   IOS/ES/ES.cpp
   IOS/ES/Formats.cpp
+  IOS/ES/Identity.cpp
+  IOS/ES/NandUtils.cpp
+  IOS/ES/TitleContents.cpp
+  IOS/ES/TitleInformation.cpp
+  IOS/ES/TitleManagement.cpp
+  IOS/ES/Views.cpp
   IOS/FS/FileIO.cpp
   IOS/FS/FS.cpp
   IOS/Network/ICMPLin.cpp
@@ -187,6 +199,7 @@ set(SRCS
   PowerPC/Profiler.cpp
   PowerPC/SignatureDB/CSVSignatureDB.cpp
   PowerPC/SignatureDB/DSYSignatureDB.cpp
+  PowerPC/SignatureDB/MEGASignatureDB.cpp
   PowerPC/SignatureDB/SignatureDB.cpp
   PowerPC/JitInterface.cpp
   PowerPC/CachedInterpreter/CachedInterpreter.cpp
@@ -234,6 +247,7 @@ if(_M_X86)
     PowerPC/Jit64/JitRegCache.cpp
     PowerPC/Jit64/Jit_SystemRegisters.cpp
     PowerPC/Jit64Common/BlockCache.cpp
+    PowerPC/Jit64Common/ConstantPool.cpp
     PowerPC/Jit64Common/EmuCodeBlock.cpp
     PowerPC/Jit64Common/FarCodeCache.cpp
     PowerPC/Jit64Common/Jit64AsmCommon.cpp

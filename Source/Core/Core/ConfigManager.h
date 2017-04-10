@@ -19,12 +19,19 @@ namespace DiscIO
 {
 enum class Language;
 enum class Region;
+class IVolume;
+}
+namespace IOS
+{
+namespace ES
+{
+class TMDReader;
+}
 }
 
 // DSP Backend Types
 #define BACKEND_NULLSOUND _trans("No audio output")
 #define BACKEND_ALSA "ALSA"
-#define BACKEND_AOSOUND "AOSound"
 #define BACKEND_COREAUDIO "CoreAudio"
 #define BACKEND_OPENAL "OpenAL"
 #define BACKEND_PULSEAUDIO "Pulse"
@@ -209,18 +216,20 @@ struct SConfig : NonCopyable
   std::string m_strDefaultISO;
   std::string m_strDVDRoot;
   std::string m_strApploader;
-  std::string m_strGameID;
-  u64 m_title_id;
-  std::string m_strName;
   std::string m_strWiiSDCardPath;
-  u16 m_revision;
 
   std::string m_perfDir;
+
+  const std::string& GetGameID() const { return m_game_id; }
+  u64 GetTitleID() const { return m_title_id; }
+  u16 GetRevision() const { return m_revision; }
+  void ResetRunningGameMetadata();
+  void SetRunningGameMetadata(const DiscIO::IVolume& volume);
+  void SetRunningGameMetadata(const IOS::ES::TMDReader& tmd);
 
   void LoadDefaults();
   static const char* GetDirectoryForRegion(DiscIO::Region region);
   bool AutoSetup(EBootBS2 _BootBS2);
-  const std::string& GetGameID() const { return m_strGameID; }
   void CheckMemcardPath(std::string& memcardPath, const std::string& gameRegion, bool isSlotA);
   DiscIO::Language GetCurrentLanguage(bool wii) const;
 
@@ -241,8 +250,8 @@ struct SConfig : NonCopyable
   std::string m_strMemoryCardB;
   std::string m_strGbaCartA;
   std::string m_strGbaCartB;
-  TEXIDevices m_EXIDevice[3];
-  SIDevices m_SIDevice[4];
+  ExpansionInterface::TEXIDevices m_EXIDevice[3];
+  SerialInterface::SIDevices m_SIDevice[4];
   std::string m_bba_mac;
 
   // interface language
@@ -374,7 +383,12 @@ private:
   void LoadUSBPassthroughSettings(IniFile& ini);
   void LoadSysconfSettings(IniFile& ini);
 
+  void SetRunningGameMetadata(const std::string& game_id, u64 title_id, u16 revision);
   bool SetRegion(DiscIO::Region region, std::string* directory_name);
 
   static SConfig* m_Instance;
+
+  std::string m_game_id;
+  u64 m_title_id;
+  u16 m_revision;
 };

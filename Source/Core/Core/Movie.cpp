@@ -2,6 +2,8 @@
 // Licensed under GPLv2+
 // Refer to the license.txt file included.
 
+#include "Core/Movie.h"
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -10,6 +12,7 @@
 #include <mbedtls/md.h>
 #include <mutex>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "Common/Assert.h"
@@ -25,7 +28,7 @@
 #include "Core/CoreTiming.h"
 #include "Core/DSP/DSPCore.h"
 #include "Core/HW/CPU.h"
-#include "Core/HW/DVDInterface.h"
+#include "Core/HW/DVD/DVDInterface.h"
 #include "Core/HW/EXI/EXI_DeviceIPL.h"
 #include "Core/HW/ProcessorInterface.h"
 #include "Core/HW/SI/SI.h"
@@ -34,7 +37,6 @@
 #include "Core/HW/WiimoteEmu/WiimoteHid.h"
 #include "Core/IOS/USB/Bluetooth/BTEmu.h"
 #include "Core/IOS/USB/Bluetooth/WiimoteDevice.h"
-#include "Core/Movie.h"
 #include "Core/NetPlayProto.h"
 #include "Core/PowerPC/PowerPC.h"
 #include "Core/State.h"
@@ -91,8 +93,8 @@ static bool s_bPolled = false;
 static std::mutex s_input_display_lock;
 static std::string s_InputDisplay[8];
 
-static GCManipFunction gcmfunc = nullptr;
-static WiiManipFunction wiimfunc = nullptr;
+static GCManipFunction s_gc_manip_func;
+static WiiManipFunction s_wii_manip_func;
 
 // NOTE: Host / CPU Thread
 static void EnsureTmpInputSize(size_t bound)
@@ -158,7 +160,7 @@ std::string GetInputDisplay()
     s_controllers = 0;
     for (int i = 0; i < 4; ++i)
     {
-      if (SerialInterface::GetDeviceType(i) != SIDEVICE_NONE)
+      if (SerialInterface::GetDeviceType(i) != SerialInterface::SIDEVICE_NONE)
         s_controllers |= (1 << i);
       if (g_wiimote_sources[i] != WIIMOTE_SRC_NONE)
         s_controllers |= (1 << (i + 4));
@@ -180,7 +182,8 @@ std::string GetInputDisplay()
 // NOTE: GPU Thread
 std::string GetRTCDisplay()
 {
-  time_t current_time = CEXIIPL::GetEmulatedTime(CEXIIPL::UNIX_EPOCH);
+  time_t current_time =
+      ExpansionInterface::CEXIIPL::GetEmulatedTime(ExpansionInterface::CEXIIPL::UNIX_EPOCH);
   tm* gm_time = gmtime(&current_time);
   char buffer[256];
   strftime(buffer, sizeof(buffer), "Date/Time: %c\n", gm_time);
@@ -484,22 +487,29 @@ void ChangePads(bool instantly)
 
   int controllers = 0;
 
-  for (int i = 0; i < MAX_SI_CHANNELS; ++i)
-    if (SIDevice_IsGCController(SConfig::GetInstance().m_SIDevice[i]))
+  for (int i = 0; i < SerialInterface::MAX_SI_CHANNELS; ++i)
+  {
+    if (SerialInterface::SIDevice_IsGCController(SConfig::GetInstance().m_SIDevice[i]))
       controllers |= (1 << i);
+  }
 
   if (instantly && (s_controllers & 0x0F) == controllers)
     return;
 
-  for (int i = 0; i < MAX_SI_CHANNELS; ++i)
+  for (int i = 0; i < SerialInterface::MAX_SI_CHANNELS; ++i)
   {
-    SIDevices device = SIDEVICE_NONE;
+    SerialInterface::SIDevices device = SerialInterface::SIDEVICE_NONE;
     if (IsUsingPad(i))
     {
-      if (SIDevice_IsGCController(SConfig::GetInstance().m_SIDevice[i]))
+      if (SerialInterface::SIDevice_IsGCController(SConfig::GetInstance().m_SIDevice[i]))
+      {
         device = SConfig::GetInstance().m_SIDevice[i];
+      }
       else
-        device = IsUsingBongo(i) ? SIDEVICE_GC_TARUKONGA : SIDEVICE_GC_CONTROLLER;
+      {
+        device = IsUsingBongo(i) ? SerialInterface::SIDEVICE_GC_TARUKONGA :
+                                   SerialInterface::SIDEVICE_GC_CONTROLLER;
+      }
     }
 
     if (instantly)  // Changes from savestates need to be instantaneous
@@ -550,7 +560,7 @@ bool BeginRecordingInput(int controllers)
   if (NetPlay::IsNetPlayRunning())
   {
     s_bNetPlay = true;
-    s_recordingStartTime = CEXIIPL::NetPlay_GetEmulatedTime();
+    s_recordingStartTime = ExpansionInterface::CEXIIPL::NetPlay_GetEmulatedTime();
   }
   else if (SConfig::GetInstance().bEnableCustomRTC)
   {
@@ -563,9 +573,11 @@ bool BeginRecordingInput(int controllers)
 
   s_rerecords = 0;
 
-  for (int i = 0; i < MAX_SI_CHANNELS; ++i)
-    if (SConfig::GetInstance().m_SIDevice[i] == SIDEVICE_GC_TARUKONGA)
+  for (int i = 0; i < SerialInterface::MAX_SI_CHANNELS; ++i)
+  {
+    if (SConfig::GetInstance().m_SIDevice[i] == SerialInterface::SIDEVICE_GC_TARUKONGA)
       s_bongos |= (1 << i);
+  }
 
   if (Core::IsRunningAndStarted())
   {
@@ -1333,7 +1345,7 @@ void EndPlayInput(bool cont)
   }
   else if (s_playMode != MODE_NONE)
   {
-    // We can be called by EmuThread during boot (CPU_POWERDOWN)
+    // We can be called by EmuThread during boot (CPU::State::PowerDown)
     bool was_running = Core::IsRunningAndStarted() && !CPU::IsStepping();
     if (was_running)
       CPU::Break();
@@ -1431,25 +1443,25 @@ void SaveRecording(const std::string& filename)
 
 void SetGCInputManip(GCManipFunction func)
 {
-  gcmfunc = func;
+  s_gc_manip_func = std::move(func);
 }
 void SetWiiInputManip(WiiManipFunction func)
 {
-  wiimfunc = func;
+  s_wii_manip_func = std::move(func);
 }
 
 // NOTE: CPU Thread
 void CallGCInputManip(GCPadStatus* PadStatus, int controllerID)
 {
-  if (gcmfunc)
-    (*gcmfunc)(PadStatus, controllerID);
+  if (s_gc_manip_func)
+    s_gc_manip_func(PadStatus, controllerID);
 }
 // NOTE: CPU Thread
 void CallWiiInputManip(u8* data, WiimoteEmu::ReportFeatures rptf, int controllerID, int ext,
                        const wiimote_key key)
 {
-  if (wiimfunc)
-    (*wiimfunc)(data, rptf, controllerID, ext, key);
+  if (s_wii_manip_func)
+    s_wii_manip_func(data, rptf, controllerID, ext, key);
 }
 
 // NOTE: GPU Thread
@@ -1477,7 +1489,7 @@ void GetSettings()
   s_bNetPlay = NetPlay::IsNetPlayRunning();
   if (SConfig::GetInstance().bWii)
   {
-    u64 title_id = SConfig::GetInstance().m_title_id;
+    u64 title_id = SConfig::GetInstance().GetTitleID();
     s_bClearSave =
         !File::Exists(Common::GetTitleDataPath(title_id, Common::FROM_SESSION_ROOT) + "banner.bin");
     s_language = SConfig::GetInstance().m_wii_language;
@@ -1487,12 +1499,14 @@ void GetSettings()
     s_bClearSave = !File::Exists(SConfig::GetInstance().m_strMemoryCardA);
     s_language = SConfig::GetInstance().SelectedLanguage;
   }
-  s_memcards |= (SConfig::GetInstance().m_EXIDevice[0] == EXIDEVICE_MEMORYCARD ||
-                 SConfig::GetInstance().m_EXIDevice[0] == EXIDEVICE_MEMORYCARDFOLDER)
-                << 0;
-  s_memcards |= (SConfig::GetInstance().m_EXIDevice[1] == EXIDEVICE_MEMORYCARD ||
-                 SConfig::GetInstance().m_EXIDevice[1] == EXIDEVICE_MEMORYCARDFOLDER)
-                << 1;
+  s_memcards |=
+      (SConfig::GetInstance().m_EXIDevice[0] == ExpansionInterface::EXIDEVICE_MEMORYCARD ||
+       SConfig::GetInstance().m_EXIDevice[0] == ExpansionInterface::EXIDEVICE_MEMORYCARDFOLDER)
+      << 0;
+  s_memcards |=
+      (SConfig::GetInstance().m_EXIDevice[1] == ExpansionInterface::EXIDEVICE_MEMORYCARD ||
+       SConfig::GetInstance().m_EXIDevice[1] == ExpansionInterface::EXIDEVICE_MEMORYCARDFOLDER)
+      << 1;
 
   std::array<u8, 20> revision = ConvertGitRevisionToBytes(scm_rev_git_str);
   std::copy(std::begin(revision), std::end(revision), std::begin(s_revision));

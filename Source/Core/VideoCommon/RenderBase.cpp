@@ -55,6 +55,8 @@
 #include "VideoCommon/Statistics.h"
 #include "VideoCommon/TextureCacheBase.h"
 #include "VideoCommon/TextureDecoder.h"
+#include "VideoCommon/VertexManagerBase.h"
+#include "VideoCommon/VertexShaderManager.h"
 #include "VideoCommon/VideoConfig.h"
 #include "VideoCommon/XFMemory.h"
 
@@ -84,11 +86,16 @@ Renderer::Renderer(int backbuffer_width, int backbuffer_height)
   FramebufferManagerBase::SetLastXfbHeight(MAX_XFB_HEIGHT);
 
   UpdateActiveConfig();
-  CalculateTargetSize();
   UpdateDrawRectangle();
+  CalculateTargetSize();
 
   OSDChoice = 0;
   OSDTime = 0;
+
+  if (SConfig::GetInstance().bWii)
+  {
+    m_aspect_wide = SConfig::GetInstance().m_wii_aspect_ratio != 0;
+  }
 }
 
 Renderer::~Renderer()
@@ -122,31 +129,41 @@ void Renderer::RenderToXFB(u32 xfbAddr, const EFBRectangle& sourceRc, u32 fbStri
   }
 }
 
-int Renderer::EFBToScaledX(int x)
+int Renderer::EFBToScaledX(int x) const
 {
   switch (g_ActiveConfig.iEFBScale)
   {
   case SCALE_AUTO:  // fractional
-    return FramebufferManagerBase::ScaleToVirtualXfbWidth(x);
+    return FramebufferManagerBase::ScaleToVirtualXfbWidth(x, m_target_rectangle);
 
   default:
     return x * (int)m_efb_scale_numeratorX / (int)m_efb_scale_denominatorX;
   };
 }
 
-int Renderer::EFBToScaledY(int y)
+int Renderer::EFBToScaledY(int y) const
 {
   switch (g_ActiveConfig.iEFBScale)
   {
   case SCALE_AUTO:  // fractional
-    return FramebufferManagerBase::ScaleToVirtualXfbHeight(y);
+    return FramebufferManagerBase::ScaleToVirtualXfbHeight(y, m_target_rectangle);
 
   default:
     return y * (int)m_efb_scale_numeratorY / (int)m_efb_scale_denominatorY;
   };
 }
 
-void Renderer::CalculateTargetScale(int x, int y, int* scaledX, int* scaledY)
+float Renderer::EFBToScaledXf(float x) const
+{
+  return x * ((float)GetTargetWidth() / (float)EFB_WIDTH);
+}
+
+float Renderer::EFBToScaledYf(float y) const
+{
+  return y * ((float)GetTargetHeight() / (float)EFB_HEIGHT);
+}
+
+void Renderer::CalculateTargetScale(int x, int y, int* scaledX, int* scaledY) const
 {
   if (g_ActiveConfig.iEFBScale == SCALE_AUTO || g_ActiveConfig.iEFBScale == SCALE_AUTO_INTEGRAL)
   {
@@ -173,8 +190,8 @@ bool Renderer::CalculateTargetSize()
   {
   case SCALE_AUTO:
   case SCALE_AUTO_INTEGRAL:
-    newEFBWidth = FramebufferManagerBase::ScaleToVirtualXfbWidth(EFB_WIDTH);
-    newEFBHeight = FramebufferManagerBase::ScaleToVirtualXfbHeight(EFB_HEIGHT);
+    newEFBWidth = FramebufferManagerBase::ScaleToVirtualXfbWidth(EFB_WIDTH, m_target_rectangle);
+    newEFBHeight = FramebufferManagerBase::ScaleToVirtualXfbHeight(EFB_HEIGHT, m_target_rectangle);
 
     if (m_last_efb_scale == SCALE_AUTO_INTEGRAL)
     {
@@ -217,7 +234,7 @@ bool Renderer::CalculateTargetSize()
     m_efb_scale_numeratorX = m_efb_scale_numeratorY = m_last_efb_scale - 3;
     m_efb_scale_denominatorX = m_efb_scale_denominatorY = 1;
 
-    const u32 max_size = GetMaxTextureSize();
+    const u32 max_size = g_ActiveConfig.backend_info.MaxTextureSize;
     if (max_size < EFB_WIDTH * m_efb_scale_numeratorX / m_efb_scale_denominatorX)
     {
       m_efb_scale_numeratorX = m_efb_scale_numeratorY = (max_size / EFB_WIDTH);
@@ -240,7 +257,7 @@ bool Renderer::CalculateTargetSize()
 }
 
 void Renderer::ConvertStereoRectangle(const TargetRectangle& rc, TargetRectangle& leftRc,
-                                      TargetRectangle& rightRc)
+                                      TargetRectangle& rightRc) const
 {
   // Resize target to half its original size
   TargetRectangle drawRc = rc;
@@ -300,7 +317,7 @@ void Renderer::DrawDebugText()
   if (g_ActiveConfig.bShowFPS || SConfig::GetInstance().m_ShowFrameCount)
   {
     if (g_ActiveConfig.bShowFPS)
-      final_cyan += StringFromFormat("FPS: %u", g_renderer->m_fps_counter.GetFPS());
+      final_cyan += StringFromFormat("FPS: %u", m_fps_counter.GetFPS());
 
     if (g_ActiveConfig.bShowFPS && SConfig::GetInstance().m_ShowFrameCount)
       final_cyan += " - ";
@@ -429,11 +446,11 @@ void Renderer::DrawDebugText()
     final_cyan += Statistics::ToStringProj();
 
   // and then the text
-  g_renderer->RenderText(final_cyan, 20, 20, 0xFF00FFFF);
-  g_renderer->RenderText(final_yellow, 20, 20, 0xFFFFFF00);
+  RenderText(final_cyan, 20, 20, 0xFF00FFFF);
+  RenderText(final_yellow, 20, 20, 0xFFFFFF00);
 }
 
-float Renderer::CalculateDrawAspectRatio(int target_width, int target_height)
+float Renderer::CalculateDrawAspectRatio(int target_width, int target_height) const
 {
   // The dimensions are the sizes that are used to create the EFB/backbuffer textures, so
   // they should always be greater than zero.
@@ -447,7 +464,7 @@ float Renderer::CalculateDrawAspectRatio(int target_width, int target_height)
 
   // The rendering window aspect ratio as a proportion of the 4:3 or 16:9 ratio
   if (g_ActiveConfig.iAspectRatio == ASPECT_ANALOG_WIDE ||
-      (g_ActiveConfig.iAspectRatio != ASPECT_ANALOG && Core::g_aspect_wide))
+      (g_ActiveConfig.iAspectRatio != ASPECT_ANALOG && m_aspect_wide))
   {
     return (static_cast<float>(target_width) / static_cast<float>(target_height)) /
            AspectToWidescreen(VideoInterface::GetAspectRatio());
@@ -459,7 +476,8 @@ float Renderer::CalculateDrawAspectRatio(int target_width, int target_height)
   }
 }
 
-std::tuple<float, float> Renderer::ScaleToDisplayAspectRatio(const int width, const int height)
+std::tuple<float, float> Renderer::ScaleToDisplayAspectRatio(const int width,
+                                                             const int height) const
 {
   // Scale either the width or height depending the content aspect ratio.
   // This way we preserve as much resolution as possible when scaling.
@@ -474,7 +492,7 @@ std::tuple<float, float> Renderer::ScaleToDisplayAspectRatio(const int width, co
   return std::make_tuple(static_cast<float>(width) / ratio, static_cast<float>(height));
 }
 
-TargetRectangle Renderer::CalculateFrameDumpDrawRectangle()
+TargetRectangle Renderer::CalculateFrameDumpDrawRectangle() const
 {
   // No point including any borders in the frame dump image, since they'd have to be cropped anyway.
   TargetRectangle rc;
@@ -521,7 +539,7 @@ void Renderer::UpdateDrawRectangle()
   if (g_ActiveConfig.bWidescreenHack)
   {
     float source_aspect = VideoInterface::GetAspectRatio();
-    if (Core::g_aspect_wide)
+    if (m_aspect_wide)
       source_aspect = AspectToWidescreen(source_aspect);
     float target_aspect;
 
@@ -641,11 +659,10 @@ void Renderer::SetWindowSize(int width, int height)
   {
     // Force 4:3 or 16:9 by cropping the image.
     float current_aspect = scaled_width / scaled_height;
-    float expected_aspect =
-        (g_ActiveConfig.iAspectRatio == ASPECT_ANALOG_WIDE ||
-         (g_ActiveConfig.iAspectRatio != ASPECT_ANALOG && Core::g_aspect_wide)) ?
-            (16.0f / 9.0f) :
-            (4.0f / 3.0f);
+    float expected_aspect = (g_ActiveConfig.iAspectRatio == ASPECT_ANALOG_WIDE ||
+                             (g_ActiveConfig.iAspectRatio != ASPECT_ANALOG && m_aspect_wide)) ?
+                                (16.0f / 9.0f) :
+                                (4.0f / 3.0f);
     if (current_aspect > expected_aspect)
     {
       // keep height, crop width
@@ -711,11 +728,27 @@ void Renderer::RecordVideoMemory()
 void Renderer::Swap(u32 xfbAddr, u32 fbWidth, u32 fbStride, u32 fbHeight, const EFBRectangle& rc,
                     u64 ticks, float Gamma)
 {
+  // Heuristic to detect if a GameCube game is in 16:9 anamorphic widescreen mode.
+  if (!SConfig::GetInstance().bWii)
+  {
+    size_t flush_count_4_3, flush_count_anamorphic;
+    std::tie(flush_count_4_3, flush_count_anamorphic) =
+        g_vertex_manager->ResetFlushAspectRatioCount();
+    size_t flush_total = flush_count_4_3 + flush_count_anamorphic;
+
+    // Modify the threshold based on which aspect ratio we're already using: if
+    // the game's in 4:3, it probably won't switch to anamorphic, and vice-versa.
+    if (m_aspect_wide)
+      m_aspect_wide = !(flush_count_4_3 > 0.75 * flush_total);
+    else
+      m_aspect_wide = flush_count_anamorphic > 0.75 * flush_total;
+  }
+
   // TODO: merge more generic parts into VideoCommon
-  g_renderer->SwapImpl(xfbAddr, fbWidth, fbStride, fbHeight, rc, ticks, Gamma);
+  SwapImpl(xfbAddr, fbWidth, fbStride, fbHeight, rc, ticks, Gamma);
 
   if (m_xfb_written)
-    g_renderer->m_fps_counter.Update();
+    m_fps_counter.Update();
 
   frameCount++;
   GFX_DEBUGGER_PAUSE_AT(NEXT_FRAME, true);
@@ -925,4 +958,23 @@ void Renderer::DumpFrameToImage(const FrameDumpConfig& config)
   std::string filename = GetFrameDumpNextImageFileName();
   TextureToPng(config.data, config.stride, filename, config.width, config.height, false);
   m_frame_dump_image_counter++;
+}
+
+bool Renderer::UseVertexDepthRange() const
+{
+  // We can't compute the depth range in the vertex shader if we don't support depth clamp.
+  if (!g_ActiveConfig.backend_info.bSupportsDepthClamp)
+    return false;
+
+  // We need a full depth range if a ztexture is used.
+  if (bpmem.ztex2.type != ZTEXTURE_DISABLE && !bpmem.zcontrol.early_ztest)
+    return true;
+
+  // If an inverted depth range is unsupported, we also need to check if the range is inverted.
+  if (!g_ActiveConfig.backend_info.bSupportsReversedDepthRange && xfmem.viewport.zRange < 0.0f)
+    return true;
+
+  // If an oversized depth range or a ztexture is used, we need to calculate the depth range
+  // in the vertex shader.
+  return fabs(xfmem.viewport.zRange) > 16777215.0f || fabs(xfmem.viewport.farZ) > 16777215.0f;
 }

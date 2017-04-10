@@ -49,7 +49,6 @@
     <ClInclude Include="FPURoundMode.h" />
     <ClInclude Include="Hash.h" />
     <ClInclude Include="IniFile.h" />
-    <ClInclude Include="LibusbContext.h" />
     <ClInclude Include="LinearDiskCache.h" />
     <ClInclude Include="MathUtil.h" />
     <ClInclude Include="MemArena.h" />
@@ -226,6 +225,9 @@
     <ClInclude Include="GL\GLExtensions\NV_primitive_restart.h">
       <Filter>GL\GLExtensions</Filter>
     </ClInclude>
+    <ClInclude Include="GL\GLExtensions\NV_depth_buffer_float.h">
+      <Filter>GL\GLExtensions</Filter>
+    </ClInclude>
     <ClInclude Include="GL\GLInterface\WGL.h">
       <Filter>GL\GLInterface</Filter>
     </ClInclude>
@@ -236,6 +238,16 @@
     <ClInclude Include="NonCopyable.h" />
     <ClInclude Include="Analytics.h" />
     <ClInclude Include="Semaphore.h" />
+    <ClInclude Include="MD5.h" />
+    <ClInclude Include="GL\GLExtensions\ARB_texture_storage.h">
+      <Filter>GL\GLExtensions</Filter>
+    </ClInclude>
+    <ClInclude Include="GL\GLExtensions\ARB_shader_image_load_store.h">
+      <Filter>GL\GLExtensions</Filter>
+    </ClInclude>
+    <ClInclude Include="GL\GLExtensions\ARB_compute_shader.h">
+      <Filter>GL\GLExtensions</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="CDUtils.cpp" />
@@ -248,7 +260,6 @@
     <ClCompile Include="FileUtil.cpp" />
     <ClCompile Include="Hash.cpp" />
     <ClCompile Include="IniFile.cpp" />
-    <ClCompile Include="LibusbContext.cpp" />
     <ClCompile Include="MathUtil.cpp" />
     <ClCompile Include="MemArena.cpp" />
     <ClCompile Include="MemoryUtil.cpp" />
@@ -302,6 +313,7 @@
     </ClCompile>
     <ClCompile Include="ucrtFreadWorkaround.cpp" />
     <ClCompile Include="Analytics.cpp" />
+    <ClCompile Include="MD5.cpp" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="CMakeLists.txt" />

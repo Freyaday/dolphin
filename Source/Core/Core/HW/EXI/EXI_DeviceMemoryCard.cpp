@@ -22,9 +22,9 @@
 #include "Core/HW/EXI/EXI.h"
 #include "Core/HW/EXI/EXI_Channel.h"
 #include "Core/HW/EXI/EXI_Device.h"
-#include "Core/HW/GCMemcard.h"
-#include "Core/HW/GCMemcardDirectory.h"
-#include "Core/HW/GCMemcardRaw.h"
+#include "Core/HW/GCMemcard/GCMemcard.h"
+#include "Core/HW/GCMemcard/GCMemcardDirectory.h"
+#include "Core/HW/GCMemcard/GCMemcardRaw.h"
 #include "Core/HW/Memmap.h"
 #include "Core/HW/Sram.h"
 #include "Core/HW/SystemTimers.h"
@@ -32,6 +32,8 @@
 #include "DiscIO/Enums.h"
 #include "DiscIO/NANDContentLoader.h"
 
+namespace ExpansionInterface
+{
 #define MC_STATUS_BUSY 0x80
 #define MC_STATUS_UNLOCKED 0x40
 #define MC_STATUS_SLEEP 0x20
@@ -156,7 +158,7 @@ void CEXIMemoryCard::SetupGciFolder(u16 sizeMb)
 {
   DiscIO::Region region = SConfig::GetInstance().m_region;
 
-  std::string game_id = SConfig::GetInstance().m_strGameID;
+  const std::string& game_id = SConfig::GetInstance().GetGameID();
   u32 CurrentGameId = 0;
   if (game_id.length() >= 4 && game_id != "00000000" && game_id != TITLEID_SYSMENU_STRING)
     CurrentGameId = BE32((u8*)game_id.c_str());
@@ -532,3 +534,4 @@ void CEXIMemoryCard::DMAWrite(u32 _uAddr, u32 _uSize)
   CoreTiming::ScheduleEvent(_uSize * (SystemTimers::GetTicksPerSecond() / MC_TRANSFER_RATE_WRITE),
                             s_et_transfer_complete[card_index], (u64)card_index);
 }
+}  // namespace ExpansionInterface

@@ -33,7 +33,7 @@
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
 #include "Core/HW/CPU.h"
-#include "Core/HW/DVDInterface.h"
+#include "Core/HW/DVD/DVDInterface.h"
 #include "Core/HW/GCKeyboard.h"
 #include "Core/HW/GCPad.h"
 #include "Core/HW/ProcessorInterface.h"
@@ -231,6 +231,7 @@ void CFrame::BindDebuggerMenuBarUpdateEvents()
   Bind(wxEVT_UPDATE_UI, &WxEventUtils::OnEnableIfCoreInitialized, IDM_SEARCH_INSTRUCTION);
   Bind(wxEVT_UPDATE_UI, &WxEventUtils::OnEnableIfCoreInitialized, IDM_CLEAR_SYMBOLS);
   Bind(wxEVT_UPDATE_UI, &WxEventUtils::OnEnableIfCoreInitialized, IDM_SCAN_FUNCTIONS);
+  Bind(wxEVT_UPDATE_UI, &WxEventUtils::OnEnableIfCoreInitialized, IDM_SCAN_SIGNATURES);
   Bind(wxEVT_UPDATE_UI, &WxEventUtils::OnEnableIfCoreInitialized, IDM_LOAD_MAP_FILE);
   Bind(wxEVT_UPDATE_UI, &WxEventUtils::OnEnableIfCoreInitialized, IDM_SAVEMAPFILE);
   Bind(wxEVT_UPDATE_UI, &WxEventUtils::OnEnableIfCoreInitialized, IDM_LOAD_MAP_FILE_AS);
@@ -242,6 +243,7 @@ void CFrame::BindDebuggerMenuBarUpdateEvents()
   Bind(wxEVT_UPDATE_UI, &WxEventUtils::OnEnableIfCoreInitialized, IDM_COMBINE_SIGNATURE_FILES);
   Bind(wxEVT_UPDATE_UI, &WxEventUtils::OnEnableIfCoreInitialized, IDM_RENAME_SYMBOLS);
   Bind(wxEVT_UPDATE_UI, &WxEventUtils::OnEnableIfCoreInitialized, IDM_USE_SIGNATURE_FILE);
+  Bind(wxEVT_UPDATE_UI, &WxEventUtils::OnEnableIfCoreInitialized, IDM_USE_MEGA_SIGNATURE_FILE);
   Bind(wxEVT_UPDATE_UI, &WxEventUtils::OnEnableIfCoreInitialized, IDM_PATCH_HLE_FUNCTIONS);
 
   Bind(wxEVT_UPDATE_UI, &WxEventUtils::OnEnableIfCoreUninitialized, IDM_JIT_NO_BLOCK_CACHE);
@@ -310,13 +312,6 @@ void CFrame::BootGame(const std::string& filename)
   if (!bootfile.empty())
   {
     StartGame(bootfile);
-    if (UseDebugger && g_pCodeWindow)
-    {
-      if (g_pCodeWindow->HasPanel<CWatchWindow>())
-        g_pCodeWindow->GetPanel<CWatchWindow>()->LoadAll();
-      if (g_pCodeWindow->HasPanel<CBreakPointWindow>())
-        g_pCodeWindow->GetPanel<CBreakPointWindow>()->LoadAll();
-    }
   }
 }
 
@@ -371,20 +366,21 @@ void CFrame::OnTASInput(wxCommandEvent& event)
 {
   for (int i = 0; i < 4; ++i)
   {
-    if (SConfig::GetInstance().m_SIDevice[i] != SIDEVICE_NONE &&
-        SConfig::GetInstance().m_SIDevice[i] != SIDEVICE_GC_GBA)
+    if (SConfig::GetInstance().m_SIDevice[i] != SerialInterface::SIDEVICE_NONE &&
+        SConfig::GetInstance().m_SIDevice[i] != SerialInterface::SIDEVICE_GC_GBA)
     {
-      g_TASInputDlg[i]->CreateGCLayout();
-      g_TASInputDlg[i]->Show();
-      g_TASInputDlg[i]->SetTitle(wxString::Format(_("TAS Input - GameCube Controller %d"), i + 1));
+      m_tas_input_dialogs[i]->CreateGCLayout();
+      m_tas_input_dialogs[i]->Show();
+      m_tas_input_dialogs[i]->SetTitle(
+          wxString::Format(_("TAS Input - GameCube Controller %d"), i + 1));
     }
 
     if (g_wiimote_sources[i] == WIIMOTE_SRC_EMU &&
         !(Core::IsRunning() && !SConfig::GetInstance().bWii))
     {
-      g_TASInputDlg[i + 4]->CreateWiiLayout(i);
-      g_TASInputDlg[i + 4]->Show();
-      g_TASInputDlg[i + 4]->SetTitle(wxString::Format(_("TAS Input - Wii Remote %d"), i + 1));
+      m_tas_input_dialogs[i + 4]->CreateWiiLayout(i);
+      m_tas_input_dialogs[i + 4]->Show();
+      m_tas_input_dialogs[i + 4]->SetTitle(wxString::Format(_("TAS Input - Wii Remote %d"), i + 1));
     }
   }
 }
@@ -464,7 +460,7 @@ void CFrame::OnRecord(wxCommandEvent& WXUNUSED(event))
 
   for (int i = 0; i < 4; i++)
   {
-    if (SIDevice_IsGCController(SConfig::GetInstance().m_SIDevice[i]))
+    if (SerialInterface::SIDevice_IsGCController(SConfig::GetInstance().m_SIDevice[i]))
       controllers |= (1 << i);
 
     if (g_wiimote_sources[i] != WIIMOTE_SRC_NONE)
@@ -844,11 +840,7 @@ void CFrame::DoStop()
 
     if (UseDebugger && g_pCodeWindow)
     {
-      if (g_pCodeWindow->HasPanel<CWatchWindow>())
-        g_pCodeWindow->GetPanel<CWatchWindow>()->SaveAll();
       PowerPC::watches.Clear();
-      if (g_pCodeWindow->HasPanel<CBreakPointWindow>())
-        g_pCodeWindow->GetPanel<CBreakPointWindow>()->SaveAll();
       PowerPC::breakpoints.Clear();
       PowerPC::memchecks.Clear();
       if (g_pCodeWindow->HasPanel<CBreakPointWindow>())
@@ -911,6 +903,9 @@ void CFrame::OnStopped()
 
   // Destroy the renderer frame when not rendering to main
   m_RenderParent->Unbind(wxEVT_SIZE, &CFrame::OnRenderParentResize, this);
+
+  // Keyboard
+  wxTheApp->Unbind(wxEVT_KEY_DOWN, &CFrame::OnKeyDown, this);
 
   // Mouse
   wxTheApp->Unbind(wxEVT_RIGHT_DOWN, &CFrame::OnMouse, this);
@@ -1174,10 +1169,11 @@ void CFrame::OnImportSave(wxCommandEvent& WXUNUSED(event))
 
 void CFrame::OnShowCheatsWindow(wxCommandEvent& WXUNUSED(event))
 {
-  if (!g_CheatsWindow)
-    g_CheatsWindow = new wxCheatsWindow(this);
-  else
-    g_CheatsWindow->Raise();
+  if (!m_cheats_window)
+    m_cheats_window = new wxCheatsWindow(this);
+
+  m_cheats_window->Show();
+  m_cheats_window->Raise();
 }
 
 void CFrame::OnLoadWiiMenu(wxCommandEvent& WXUNUSED(event))
@@ -1519,12 +1515,12 @@ void CFrame::UpdateGUI()
   m_Mgr->Update();
 
   // Update non-modal windows
-  if (g_CheatsWindow)
+  if (m_cheats_window)
   {
     if (SConfig::GetInstance().bEnableCheats)
-      g_CheatsWindow->UpdateGUI();
+      m_cheats_window->UpdateGUI();
     else
-      g_CheatsWindow->Close();
+      m_cheats_window->Hide();
   }
 }
 
@@ -1598,7 +1594,7 @@ void CFrame::GameListChanged(wxCommandEvent& event)
     break;
   case IDM_PURGE_GAME_LIST_CACHE:
     std::vector<std::string> rFilenames =
-        DoFileSearch({".cache"}, {File::GetUserPath(D_CACHE_IDX)});
+        Common::DoFileSearch({".cache"}, {File::GetUserPath(D_CACHE_IDX)});
 
     for (const std::string& rFilename : rFilenames)
     {

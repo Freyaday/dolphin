@@ -51,8 +51,6 @@ void VideoConfig::UpdateProjectionHack()
   ::UpdateProjectionHack(g_Config.iPhackvalue, g_Config.sPhackvalue);
 }
 
-static int s_max_texture_size = 0;
-
 namespace OGL
 {
 VideoConfig g_ogl_config;
@@ -334,48 +332,11 @@ Renderer::Renderer()
 {
   bool bSuccess = true;
 
-  // Init extension support.
-  if (!GLExtensions::Init())
-  {
-    // OpenGL 2.0 is required for all shader based drawings. There is no way to get this by
-    // extensions
-    PanicAlert("GPU: OGL ERROR: Does your video card support OpenGL 2.0?");
-    bSuccess = false;
-  }
-
   g_ogl_config.gl_vendor = (const char*)glGetString(GL_VENDOR);
   g_ogl_config.gl_renderer = (const char*)glGetString(GL_RENDERER);
   g_ogl_config.gl_version = (const char*)glGetString(GL_VERSION);
 
   InitDriverInfo();
-
-  if (GLExtensions::Version() < 300)
-  {
-    // integer vertex attributes require a gl3 only function
-    PanicAlert("GPU: OGL ERROR: Need OpenGL version 3.\n"
-               "GPU: Does your video card support OpenGL 3?");
-    bSuccess = false;
-  }
-
-  // check for the max vertex attributes
-  GLint numvertexattribs = 0;
-  glGetIntegerv(GL_MAX_VERTEX_ATTRIBS, &numvertexattribs);
-  if (numvertexattribs < 16)
-  {
-    PanicAlert("GPU: OGL ERROR: Number of attributes %d not enough.\n"
-               "GPU: Does your video card support OpenGL 2.x?",
-               numvertexattribs);
-    bSuccess = false;
-  }
-
-  // check the max texture width and height
-  GLint max_texture_size;
-  glGetIntegerv(GL_MAX_TEXTURE_SIZE, (GLint*)&max_texture_size);
-  if (max_texture_size < 1024)
-  {
-    PanicAlert("GL_MAX_TEXTURE_SIZE too small at %i - must be at least 1024.", max_texture_size);
-    bSuccess = false;
-  }
 
   if (GLInterface->GetMode() == GLInterfaceMode::MODE_OPENGL)
   {
@@ -450,7 +411,8 @@ Renderer::Renderer()
   g_Config.backend_info.bSupportsPrimitiveRestart =
       !DriverDetails::HasBug(DriverDetails::BUG_PRIMITIVE_RESTART) &&
       ((GLExtensions::Version() >= 310) || GLExtensions::Supports("GL_NV_primitive_restart"));
-  g_Config.backend_info.bSupportsBBox =
+  g_Config.backend_info.bSupportsBBox = true;
+  g_Config.backend_info.bSupportsFragmentStoresAndAtomics =
       GLExtensions::Supports("GL_ARB_shader_storage_buffer_object");
   g_Config.backend_info.bSupportsGSInstancing = GLExtensions::Supports("GL_ARB_gpu_shader5");
   g_Config.backend_info.bSupportsSSAA = GLExtensions::Supports("GL_ARB_gpu_shader5") &&
@@ -489,15 +451,16 @@ Renderer::Renderer()
   g_ogl_config.bSupportViewportFloat = GLExtensions::Supports("GL_ARB_viewport_array");
   g_ogl_config.bSupportsDebug =
       GLExtensions::Supports("GL_KHR_debug") || GLExtensions::Supports("GL_ARB_debug_output");
-  g_ogl_config.bSupports3DTextureStorage =
+  g_ogl_config.bSupportsTextureStorage = GLExtensions::Supports("GL_ARB_texture_storage");
+  g_ogl_config.bSupports3DTextureStorageMultisample =
       GLExtensions::Supports("GL_ARB_texture_storage_multisample") ||
       GLExtensions::Supports("GL_OES_texture_storage_multisample_2d_array");
-  g_ogl_config.bSupports2DTextureStorage =
+  g_ogl_config.bSupports2DTextureStorageMultisample =
       GLExtensions::Supports("GL_ARB_texture_storage_multisample");
-  g_ogl_config.bSupportsEarlyFragmentTests =
-      GLExtensions::Supports("GL_ARB_shader_image_load_store");
+  g_ogl_config.bSupportsImageLoadStore = GLExtensions::Supports("GL_ARB_shader_image_load_store");
   g_ogl_config.bSupportsConservativeDepth = GLExtensions::Supports("GL_ARB_conservative_depth");
   g_ogl_config.bSupportsAniso = GLExtensions::Supports("GL_EXT_texture_filter_anisotropic");
+  g_Config.backend_info.bSupportsComputeShaders = GLExtensions::Supports("GL_ARB_compute_shader");
 
   if (GLInterface->GetMode() == GLInterfaceMode::MODE_OPENGLES3)
   {
@@ -524,6 +487,7 @@ Renderer::Renderer()
     {
       g_ogl_config.eSupportedGLSLVersion = GLSLES_300;
       g_ogl_config.bSupportsAEP = false;
+      g_ogl_config.bSupportsTextureStorage = true;
       g_Config.backend_info.bSupportsGeometryShaders = false;
     }
     else if (GLExtensions::Version() == 310)
@@ -531,16 +495,18 @@ Renderer::Renderer()
       g_ogl_config.eSupportedGLSLVersion = GLSLES_310;
       g_ogl_config.bSupportsAEP = GLExtensions::Supports("GL_ANDROID_extension_pack_es31a");
       g_Config.backend_info.bSupportsBindingLayout = true;
-      g_ogl_config.bSupportsEarlyFragmentTests = true;
+      g_ogl_config.bSupportsImageLoadStore = true;
       g_Config.backend_info.bSupportsGeometryShaders = g_ogl_config.bSupportsAEP;
+      g_Config.backend_info.bSupportsComputeShaders = true;
       g_Config.backend_info.bSupportsGSInstancing =
           g_Config.backend_info.bSupportsGeometryShaders && g_ogl_config.SupportedESPointSize > 0;
       g_Config.backend_info.bSupportsSSAA = g_ogl_config.bSupportsAEP;
-      g_Config.backend_info.bSupportsBBox = true;
+      g_Config.backend_info.bSupportsFragmentStoresAndAtomics = true;
       g_ogl_config.bSupportsMSAA = true;
-      g_ogl_config.bSupports2DTextureStorage = true;
+      g_ogl_config.bSupportsTextureStorage = true;
+      g_ogl_config.bSupports2DTextureStorageMultisample = true;
       if (g_ActiveConfig.iStereoMode > 0 && g_ActiveConfig.iMultisamples > 1 &&
-          !g_ogl_config.bSupports3DTextureStorage)
+          !g_ogl_config.bSupports3DTextureStorageMultisample)
       {
         // GLES 3.1 can't support stereo rendering and MSAA
         OSD::AddMessage("MSAA Stereo rendering isn't supported by your GPU.", 10000);
@@ -552,18 +518,20 @@ Renderer::Renderer()
       g_ogl_config.eSupportedGLSLVersion = GLSLES_320;
       g_ogl_config.bSupportsAEP = GLExtensions::Supports("GL_ANDROID_extension_pack_es31a");
       g_Config.backend_info.bSupportsBindingLayout = true;
-      g_ogl_config.bSupportsEarlyFragmentTests = true;
+      g_ogl_config.bSupportsImageLoadStore = true;
       g_Config.backend_info.bSupportsGeometryShaders = true;
+      g_Config.backend_info.bSupportsComputeShaders = true;
       g_Config.backend_info.bSupportsGSInstancing = g_ogl_config.SupportedESPointSize > 0;
       g_Config.backend_info.bSupportsPaletteConversion = true;
       g_Config.backend_info.bSupportsSSAA = true;
-      g_Config.backend_info.bSupportsBBox = true;
+      g_Config.backend_info.bSupportsFragmentStoresAndAtomics = true;
       g_ogl_config.bSupportsCopySubImage = true;
       g_ogl_config.bSupportsGLBaseVertex = true;
       g_ogl_config.bSupportsDebug = true;
       g_ogl_config.bSupportsMSAA = true;
-      g_ogl_config.bSupports2DTextureStorage = true;
-      g_ogl_config.bSupports3DTextureStorage = true;
+      g_ogl_config.bSupportsTextureStorage = true;
+      g_ogl_config.bSupports2DTextureStorageMultisample = true;
+      g_ogl_config.bSupports3DTextureStorageMultisample = true;
     }
   }
   else
@@ -579,8 +547,7 @@ Renderer::Renderer()
     else if (GLExtensions::Version() == 300)
     {
       g_ogl_config.eSupportedGLSLVersion = GLSL_130;
-      g_ogl_config.bSupportsEarlyFragmentTests =
-          false;  // layout keyword is only supported on glsl150+
+      g_ogl_config.bSupportsImageLoadStore = false;  // layout keyword is only supported on glsl150+
       g_ogl_config.bSupportsConservativeDepth =
           false;  // layout keyword is only supported on glsl150+
       g_Config.backend_info.bSupportsGeometryShaders =
@@ -589,8 +556,7 @@ Renderer::Renderer()
     else if (GLExtensions::Version() == 310)
     {
       g_ogl_config.eSupportedGLSLVersion = GLSL_140;
-      g_ogl_config.bSupportsEarlyFragmentTests =
-          false;  // layout keyword is only supported on glsl150+
+      g_ogl_config.bSupportsImageLoadStore = false;  // layout keyword is only supported on glsl150+
       g_ogl_config.bSupportsConservativeDepth =
           false;  // layout keyword is only supported on glsl150+
       g_Config.backend_info.bSupportsGeometryShaders =
@@ -604,10 +570,28 @@ Renderer::Renderer()
     {
       g_ogl_config.eSupportedGLSLVersion = GLSL_330;
     }
+    else if (GLExtensions::Version() >= 430)
+    {
+      // TODO: We should really parse the GL_SHADING_LANGUAGE_VERSION token.
+      g_ogl_config.eSupportedGLSLVersion = GLSL_430;
+      g_ogl_config.bSupportsTextureStorage = true;
+      g_ogl_config.bSupportsImageLoadStore = true;
+      g_Config.backend_info.bSupportsSSAA = true;
+
+      // Compute shaders are core in GL4.3.
+      g_Config.backend_info.bSupportsComputeShaders = true;
+    }
     else
     {
       g_ogl_config.eSupportedGLSLVersion = GLSL_400;
       g_Config.backend_info.bSupportsSSAA = true;
+
+      if (GLExtensions::Version() == 420)
+      {
+        // Texture storage and shader image load/store are core in GL4.2.
+        g_ogl_config.bSupportsTextureStorage = true;
+        g_ogl_config.bSupportsImageLoadStore = true;
+      }
     }
 
     // Desktop OpenGL can't have the Android Extension Pack
@@ -616,7 +600,18 @@ Renderer::Renderer()
 
   // Either method can do early-z tests. See PixelShaderGen for details.
   g_Config.backend_info.bSupportsEarlyZ =
-      g_ogl_config.bSupportsEarlyFragmentTests || g_ogl_config.bSupportsConservativeDepth;
+      g_ogl_config.bSupportsImageLoadStore || g_ogl_config.bSupportsConservativeDepth;
+
+  glGetIntegerv(GL_MAX_SAMPLES, &g_ogl_config.max_samples);
+  if (g_ogl_config.max_samples < 1 || !g_ogl_config.bSupportsMSAA)
+    g_ogl_config.max_samples = 1;
+
+  // We require texel buffers, image load store, and compute shaders to enable GPU texture decoding.
+  // If the driver doesn't expose the extensions, but supports GL4.3/GLES3.1, it will still be
+  // enabled in the version check below.
+  g_Config.backend_info.bSupportsGPUTextureDecoding =
+      g_Config.backend_info.bSupportsPaletteConversion &&
+      g_Config.backend_info.bSupportsComputeShaders && g_ogl_config.bSupportsImageLoadStore;
 
   if (g_ogl_config.bSupportsDebug)
   {
@@ -657,10 +652,6 @@ Renderer::Renderer()
     return;
   }
 
-  glGetIntegerv(GL_MAX_SAMPLES, &g_ogl_config.max_samples);
-  if (g_ogl_config.max_samples < 1 || !g_ogl_config.bSupportsMSAA)
-    g_ogl_config.max_samples = 1;
-
   g_Config.VerifyValidity();
   UpdateActiveConfig();
 
@@ -698,10 +689,13 @@ Renderer::Renderer()
   // options while running
   g_Config.bRunning = true;
 
-  glStencilFunc(GL_ALWAYS, 0, 0);
-  glBlendFunc(GL_ONE, GL_ONE);
+  // The stencil is used for bounding box emulation when SSBOs are not available
+  glDisable(GL_STENCIL_TEST);
+  glStencilFunc(GL_ALWAYS, 1, 0xFF);
+  glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
 
-  glViewport(0, 0, GetTargetWidth(), GetTargetHeight());  // Reset The Current Viewport
+  // Reset The Current Viewport
+  glViewport(0, 0, GetTargetWidth(), GetTargetHeight());
   if (g_ActiveConfig.backend_info.bSupportsClipControl)
     glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE);
 
@@ -718,10 +712,9 @@ Renderer::Renderer()
 
   glPixelStorei(GL_UNPACK_ALIGNMENT, 4);  // 4-byte pixel alignment
 
-  glDisable(GL_STENCIL_TEST);
   glEnable(GL_SCISSOR_TEST);
-
   glScissor(0, 0, GetTargetWidth(), GetTargetHeight());
+  glBlendFunc(GL_ONE, GL_ONE);
   glBlendColor(0, 0, 0, 0.5f);
   glClearDepthf(1.0f);
 
@@ -774,8 +767,8 @@ void Renderer::Shutdown()
 void Renderer::Init()
 {
   // Initialize the FramebufferManager
-  g_framebuffer_manager =
-      std::make_unique<FramebufferManager>(m_target_width, m_target_height, s_MSAASamples);
+  g_framebuffer_manager = std::make_unique<FramebufferManager>(
+      m_target_width, m_target_height, s_MSAASamples, BoundingBox::NeedsStencilBuffer());
 
   m_post_processor = std::make_unique<OpenGLPostProcessing>();
   s_raster_font = std::make_unique<RasterFont>();
@@ -1095,10 +1088,8 @@ void Renderer::SetViewport()
                           (float)scissorYOff);
   float Width = EFBToScaledXf(2.0f * xfmem.viewport.wd);
   float Height = EFBToScaledYf(-2.0f * xfmem.viewport.ht);
-  float range = MathUtil::Clamp<float>(xfmem.viewport.zRange, -16777215.0f, 16777215.0f);
-  float min_depth =
-      MathUtil::Clamp<float>(xfmem.viewport.farZ - range, 0.0f, 16777215.0f) / 16777216.0f;
-  float max_depth = MathUtil::Clamp<float>(xfmem.viewport.farZ, 0.0f, 16777215.0f) / 16777216.0f;
+  float min_depth = (xfmem.viewport.farZ - xfmem.viewport.zRange) / 16777216.0f;
+  float max_depth = xfmem.viewport.farZ / 16777216.0f;
   if (Width < 0)
   {
     X += Width;
@@ -1121,10 +1112,31 @@ void Renderer::SetViewport()
     glViewport(iceilf(X), iceilf(Y), iceilf(Width), iceilf(Height));
   }
 
-  // Set the reversed depth range. If we do depth clipping and depth range in the
-  // vertex shader we only need to ensure depth values don't exceed the maximum
-  // value supported by the console GPU. If not, we simply clamp the near/far values
-  // themselves to the maximum value as done above.
+  if (!g_ActiveConfig.backend_info.bSupportsDepthClamp)
+  {
+    // There's no way to support oversized depth ranges in this situation. Let's just clamp the
+    // range to the maximum value supported by the console GPU and hope for the best.
+    min_depth = MathUtil::Clamp(min_depth, 0.0f, GX_MAX_DEPTH);
+    max_depth = MathUtil::Clamp(max_depth, 0.0f, GX_MAX_DEPTH);
+  }
+
+  if (UseVertexDepthRange())
+  {
+    // We need to ensure depth values are clamped the maximum value supported by the console GPU.
+    // Taking into account whether the depth range is inverted or not.
+    if (xfmem.viewport.zRange < 0.0f)
+    {
+      min_depth = GX_MAX_DEPTH;
+      max_depth = 0.0f;
+    }
+    else
+    {
+      min_depth = 0.0f;
+      max_depth = GX_MAX_DEPTH;
+    }
+  }
+
+  // Set the reversed depth range.
   glDepthRangef(max_depth, min_depth);
 }
 
@@ -1359,34 +1371,38 @@ void Renderer::SwapImpl(u32 xfbAddr, u32 fbWidth, u32 fbStride, u32 fbHeight,
   }
 
   bool target_size_changed = CalculateTargetSize();
-  if (target_size_changed || xfbchanged || window_resized ||
-      (s_last_multisamples != g_ActiveConfig.iMultisamples) ||
-      (s_last_stereo_mode != (g_ActiveConfig.iStereoMode > 0)))
+  bool stencil_buffer_enabled =
+      static_cast<FramebufferManager*>(g_framebuffer_manager.get())->HasStencilBuffer();
+
+  bool fb_needs_update = target_size_changed ||
+                         s_last_multisamples != g_ActiveConfig.iMultisamples ||
+                         stencil_buffer_enabled != BoundingBox::NeedsStencilBuffer() ||
+                         s_last_stereo_mode != (g_ActiveConfig.iStereoMode > 0);
+
+  if (xfbchanged || window_resized || fb_needs_update)
   {
     s_last_xfb_mode = g_ActiveConfig.bUseRealXFB;
-
     UpdateDrawRectangle();
+  }
+  if (fb_needs_update)
+  {
+    s_last_stereo_mode = g_ActiveConfig.iStereoMode > 0;
+    s_last_multisamples = g_ActiveConfig.iMultisamples;
+    s_MSAASamples = s_last_multisamples;
 
-    if (target_size_changed || s_last_multisamples != g_ActiveConfig.iMultisamples ||
-        s_last_stereo_mode != (g_ActiveConfig.iStereoMode > 0))
+    if (s_MSAASamples > 1 && s_MSAASamples > g_ogl_config.max_samples)
     {
-      s_last_stereo_mode = g_ActiveConfig.iStereoMode > 0;
-      s_last_multisamples = g_ActiveConfig.iMultisamples;
-      s_MSAASamples = s_last_multisamples;
-
-      if (s_MSAASamples > 1 && s_MSAASamples > g_ogl_config.max_samples)
-      {
-        s_MSAASamples = g_ogl_config.max_samples;
-        OSD::AddMessage(StringFromFormat(
-                            "%d Anti Aliasing samples selected, but only %d supported by your GPU.",
-                            s_last_multisamples, g_ogl_config.max_samples),
-                        10000);
-      }
-
-      g_framebuffer_manager.reset();
-      g_framebuffer_manager =
-          std::make_unique<FramebufferManager>(m_target_width, m_target_height, s_MSAASamples);
+      s_MSAASamples = g_ogl_config.max_samples;
+      OSD::AddMessage(
+          StringFromFormat("%d Anti Aliasing samples selected, but only %d supported by your GPU.",
+                           s_last_multisamples, g_ogl_config.max_samples),
+          10000);
     }
+
+    g_framebuffer_manager.reset();
+    g_framebuffer_manager = std::make_unique<FramebufferManager>(
+        m_target_width, m_target_height, s_MSAASamples, BoundingBox::NeedsStencilBuffer());
+    BoundingBox::SetTargetSizeChanged(m_target_width, m_target_height);
   }
 
   // ---------------------------------------------------------------------
@@ -1777,19 +1793,6 @@ void Renderer::SetSamplerState(int stage, int texindex, bool custom_tex)
 void Renderer::SetInterlacingMode()
 {
   // TODO
-}
-}
-
-namespace OGL
-{
-u32 Renderer::GetMaxTextureSize()
-{
-  // Right now nvidia seems to do something very weird if we try to cache GL_MAX_TEXTURE_SIZE in
-  // init. This is a workaround that lets
-  // us keep the perf improvement that caching it gives us.
-  if (s_max_texture_size == 0)
-    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &s_max_texture_size);
-  return static_cast<u32>(s_max_texture_size);
 }
 
 void Renderer::ChangeSurface(void* new_surface_handle)

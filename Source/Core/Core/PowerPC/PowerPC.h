@@ -152,7 +152,7 @@ const char* GetCPUName();
 // Init() will be called when added and Shutdown() when removed.
 // [Threadsafety: Same as SetMode(), except it cannot be called from inside the CPU
 //  run loop on the CPU Thread - it doesn't make sense for a CPU to remove itself
-//  while it is CPU_RUNNING]
+//  while it is in State::Running]
 void InjectExternalCPUCore(CPUCoreBase* core);
 
 // Stepping requires the CPU Execution lock (CPU::PauseAndLock or CPU Thread)
@@ -288,16 +288,20 @@ struct TranslateResult
 };
 TranslateResult JitCache_TranslateAddress(u32 address);
 
-static const int BAT_INDEX_SHIFT = 17;
+constexpr int BAT_INDEX_SHIFT = 17;
+constexpr u32 BAT_PAGE_SIZE = 1 << BAT_INDEX_SHIFT;
+constexpr u32 BAT_MAPPED_BIT = 0x1;
+constexpr u32 BAT_PHYSICAL_BIT = 0x2;
+constexpr u32 BAT_RESULT_MASK = ~0x3;
 using BatTable = std::array<u32, 1 << (32 - BAT_INDEX_SHIFT)>;  // 128 KB
 extern BatTable ibat_table;
 extern BatTable dbat_table;
 inline bool TranslateBatAddess(const BatTable& bat_table, u32* address)
 {
   u32 bat_result = bat_table[*address >> BAT_INDEX_SHIFT];
-  if ((bat_result & 1) == 0)
+  if ((bat_result & BAT_MAPPED_BIT) == 0)
     return false;
-  *address = (bat_result & ~3) | (*address & 0x0001FFFF);
+  *address = (bat_result & BAT_RESULT_MASK) | (*address & (BAT_PAGE_SIZE - 1));
   return true;
 }
 }  // namespace

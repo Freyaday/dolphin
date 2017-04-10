@@ -64,11 +64,13 @@ void VideoBackend::InitBackendInfo()
   }
 
   g_Config.backend_info.api_type = APIType::D3D;
+  g_Config.backend_info.MaxTextureSize = D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION;
   g_Config.backend_info.bSupportsExclusiveFullscreen = false;
   g_Config.backend_info.bSupportsDualSourceBlend = true;
   g_Config.backend_info.bSupportsPrimitiveRestart = true;
   g_Config.backend_info.bSupportsOversizedViewports = false;
   g_Config.backend_info.bSupportsGeometryShaders = true;
+  g_Config.backend_info.bSupportsComputeShaders = false;
   g_Config.backend_info.bSupports3DVision = true;
   g_Config.backend_info.bSupportsPostProcessing = false;
   g_Config.backend_info.bSupportsPaletteConversion = true;
@@ -77,6 +79,7 @@ void VideoBackend::InitBackendInfo()
   g_Config.backend_info.bSupportsReversedDepthRange = false;
   g_Config.backend_info.bSupportsMultithreading = false;
   g_Config.backend_info.bSupportsInternalResolutionFrameDumps = false;
+  g_Config.backend_info.bSupportsGPUTextureDecoding = false;
 
   IDXGIFactory* factory;
   IDXGIAdapter* ad;
@@ -119,7 +122,8 @@ void VideoBackend::InitBackendInfo()
         g_Config.backend_info.bSupportsEarlyZ = true;
 
         // Requires full UAV functionality (only available in shader model 5)
-        g_Config.backend_info.bSupportsBBox = true;
+        g_Config.backend_info.bSupportsBBox =
+            g_Config.backend_info.bSupportsFragmentStoresAndAtomics = true;
 
         // Requires the instance attribute (only available in shader model 5)
         g_Config.backend_info.bSupportsGSInstancing = true;

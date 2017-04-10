@@ -6,14 +6,6 @@
 // Supports simple memory patches, and has a partial Action Replay implementation
 // in ActionReplay.cpp/h.
 
-// TODO: Still even needed?  Zelda WW now works with improved DSP code.
-// Zelda item hang fixes:
-// [Tue Aug 21 2007] [18:30:40] <Knuckles->    0x802904b4 in US released
-// [Tue Aug 21 2007] [18:30:53] <Knuckles->    0x80294d54 in EUR Demo version
-// [Tue Aug 21 2007] [18:31:10] <Knuckles->    we just patch a blr on it (0x4E800020)
-// [OnLoad]
-// 0x80020394=dword,0x4e800020
-
 #include <algorithm>
 #include <map>
 #include <set>
@@ -163,10 +155,7 @@ void LoadPatches()
   LoadPatchSection("OnFrame", onFrame, globalIni, localIni);
   ActionReplay::LoadAndApplyCodes(globalIni, localIni);
 
-  // lil silly
-  std::vector<Gecko::GeckoCode> gcodes;
-  Gecko::LoadCodes(globalIni, localIni, gcodes);
-  Gecko::SetActiveCodes(gcodes);
+  Gecko::SetActiveCodes(Gecko::LoadCodes(globalIni, localIni));
 
   LoadSpeedhacks("Speedhacks", merged);
 }
@@ -255,6 +244,12 @@ void Shutdown()
   speedHacks.clear();
   ActionReplay::ApplyCodes({});
   Gecko::Shutdown();
+}
+
+void Reload()
+{
+  Shutdown();
+  LoadPatches();
 }
 
 }  // namespace

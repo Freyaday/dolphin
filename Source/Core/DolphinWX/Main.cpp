@@ -29,6 +29,7 @@
 #include "Common/FileUtil.h"
 #include "Common/IniFile.h"
 #include "Common/Logging/LogManager.h"
+#include "Common/MsgHandler.h"
 #include "Common/Thread.h"
 
 #include "Core/Analytics.h"
@@ -91,7 +92,6 @@ bool DolphinApp::OnCmdLineParsed(wxCmdLineParser& parser)
 
 bool DolphinApp::OnInit()
 {
-  std::lock_guard<std::mutex> lk(s_init_mutex);
   if (!wxApp::OnInit())
     return false;
 
@@ -108,7 +108,19 @@ bool DolphinApp::OnInit()
   wxHandleFatalExceptions(true);
 #endif
 
+#ifdef _WIN32
+  const bool console_attached = AttachConsole(ATTACH_PARENT_PROCESS) != FALSE;
+  HANDLE stdout_handle = ::GetStdHandle(STD_OUTPUT_HANDLE);
+  if (console_attached && stdout_handle)
+  {
+    freopen("CONOUT$", "w", stdout);
+    freopen("CONOUT$", "w", stderr);
+  }
+#endif
+
   ParseCommandLine();
+
+  std::lock_guard<std::mutex> lk(s_init_mutex);
 
   UICommon::SetUserDirectory(m_user_path.ToStdString());
   UICommon::CreateDirectories();
@@ -520,14 +532,16 @@ void Host_ConnectWiimote(int wm_idx, bool connect)
 
 void Host_ShowVideoConfig(void* parent, const std::string& backend_name)
 {
+  wxWindow* const parent_window = static_cast<wxWindow*>(parent);
+
   if (backend_name == "Software Renderer")
   {
-    SoftwareVideoConfigDialog diag((wxWindow*)parent, backend_name);
+    SoftwareVideoConfigDialog diag(parent_window, backend_name);
     diag.ShowModal();
   }
   else
   {
-    VideoConfigDiag diag((wxWindow*)parent, backend_name);
+    VideoConfigDiag diag(parent_window, backend_name);
     diag.ShowModal();
   }
 }

@@ -18,7 +18,7 @@
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
 #include "Core/HLE/HLE.h"
-#include "Core/HW/DVDInterface.h"
+#include "Core/HW/DVD/DVDInterface.h"
 #include "Core/HW/EXI/EXI_DeviceIPL.h"
 #include "Core/HW/Memmap.h"
 #include "Core/IOS/ES/ES.h"
@@ -30,9 +30,22 @@
 #include "DiscIO/Enums.h"
 #include "DiscIO/Volume.h"
 
-void CBoot::RunFunction(u32 _iAddr)
+namespace
 {
-  PC = _iAddr;
+void PresetTimeBaseTicks()
+{
+  const u64 emulated_time =
+      ExpansionInterface::CEXIIPL::GetEmulatedTime(ExpansionInterface::CEXIIPL::GC_EPOCH);
+
+  const u64 time_base_ticks = emulated_time * 40500000ULL;
+
+  PowerPC::HostWrite_U64(time_base_ticks, 0x800030D8);
+}
+}  // Anonymous namespace
+
+void CBoot::RunFunction(u32 address)
+{
+  PC = address;
   LR = 0x00;
 
   while (PC != 0x00)
@@ -43,7 +56,7 @@ void CBoot::RunFunction(u32 _iAddr)
 // GameCube Bootstrap 2 HLE:
 // copy the apploader to 0x81200000
 // execute the apploader, function by function, using the above utility.
-bool CBoot::EmulatedBS2_GC(bool skipAppLoader)
+bool CBoot::EmulatedBS2_GC(bool skip_app_loader)
 {
   INFO_LOG(BOOT, "Faking GC BS2...");
 
@@ -67,7 +80,7 @@ bool CBoot::EmulatedBS2_GC(bool skipAppLoader)
   // to 0x80000000 according to YAGCD 4.2.
 
   // It's possible to boot DOL and ELF files without a disc inserted
-  if (DVDInterface::VolumeIsValid())
+  if (DVDInterface::IsDiscInside())
     DVDRead(/*offset*/ 0x00000000, /*address*/ 0x00000000, 0x20, false);  // write disc info
 
   PowerPC::HostWrite_U32(0x0D15EA5E,
@@ -93,14 +106,14 @@ bool CBoot::EmulatedBS2_GC(bool skipAppLoader)
   PowerPC::HostWrite_U32(0x4c000064, 0x80000800);  // Write default FPU Handler:     rfi
   PowerPC::HostWrite_U32(0x4c000064, 0x80000C00);  // Write default Syscall Handler: rfi
 
-  PowerPC::HostWrite_U64((u64)CEXIIPL::GetEmulatedTime(CEXIIPL::GC_EPOCH) * (u64)40500000,
-                         0x800030D8);  // Preset time base ticks
+  PresetTimeBaseTicks();
+
   // HIO checks this
   // PowerPC::HostWrite_U16(0x8200,     0x000030e6); // Console type
 
   HLE::Patch(0x81300000, "OSReport");  // HLE OSReport for Apploader
 
-  if (!DVDInterface::VolumeIsValid())
+  if (!DVDInterface::IsDiscInside())
     return false;
 
   // Load Apploader to Memory - The apploader is hardcoded to begin at 0x2440 on the disc,
@@ -108,7 +121,7 @@ bool CBoot::EmulatedBS2_GC(bool skipAppLoader)
   const DiscIO::IVolume& volume = DVDInterface::GetVolume();
   const u32 apploader_offset = 0x2440;
   u32 apploader_entry, apploader_size, apploader_trailer;
-  if (skipAppLoader || !volume.ReadSwapped(apploader_offset + 0x10, &apploader_entry, false) ||
+  if (skip_app_loader || !volume.ReadSwapped(apploader_offset + 0x10, &apploader_entry, false) ||
       !volume.ReadSwapped(apploader_offset + 0x14, &apploader_size, false) ||
       !volume.ReadSwapped(apploader_offset + 0x18, &apploader_trailer, false) ||
       apploader_entry == (u32)-1 || apploader_size + apploader_trailer == (u32)-1)
@@ -182,9 +195,6 @@ bool CBoot::EmulatedBS2_GC(bool skipAppLoader)
   // return
   PC = PowerPC::ppcState.gpr[3];
 
-  // Load patches
-  PatchEngine::LoadPatches();
-
   return true;
 }
 
@@ -212,7 +222,7 @@ bool CBoot::SetupWiiMemory(u64 ios_title_id)
 
   if (serno.empty() || serno == "000000000")
   {
-    if (Core::g_want_determinism)
+    if (Core::WantsDeterminism())
       serno = "123456789";
     else
       serno = SettingsHandler::GenerateSerialNumber();
@@ -255,7 +265,7 @@ bool CBoot::SetupWiiMemory(u64 ios_title_id)
   */
 
   // When booting a WAD or the system menu, there will probably not be a disc inserted
-  if (DVDInterface::VolumeIsValid())
+  if (DVDInterface::IsDiscInside())
     DVDRead(0x00000000, 0x00000000, 0x20, false);  // Game Code
 
   Memory::Write_U32(0x0D15EA5E, 0x00000020);            // Another magic word
@@ -306,7 +316,7 @@ bool CBoot::SetupWiiMemory(u64 ios_title_id)
 bool CBoot::EmulatedBS2_Wii()
 {
   INFO_LOG(BOOT, "Faking Wii BS2...");
-  if (!DVDInterface::VolumeIsValid())
+  if (!DVDInterface::IsDiscInside())
     return false;
 
   if (DVDInterface::GetVolume().GetVolumeType() != DiscIO::Platform::WII_DISC)
@@ -415,7 +425,7 @@ bool CBoot::EmulatedBS2_Wii()
 }
 
 // Returns true if apploader has run successfully
-bool CBoot::EmulatedBS2(bool _bIsWii)
+bool CBoot::EmulatedBS2(bool is_wii)
 {
-  return _bIsWii ? EmulatedBS2_Wii() : EmulatedBS2_GC();
+  return is_wii ? EmulatedBS2_Wii() : EmulatedBS2_GC();
 }

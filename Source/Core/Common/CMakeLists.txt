@@ -40,10 +40,7 @@ set(SRCS
   Logging/LogManager.cpp
 )
 
-if(LIBUSB_FOUND)
-  set(LIBS ${LIBS} ${LIBUSB_LIBRARIES})
-  set(SRCS ${SRCS} LibusbContext.cpp)
-endif(LIBUSB_FOUND)
+set(LIBS ${LIBS} ${MBEDTLS_LIBRARIES})
 
 if(ANDROID)
   set(SRCS ${SRCS}
@@ -100,6 +97,9 @@ if(WIN32)
   set(SRCS ${SRCS} GL/GLInterface/WGL.cpp)
 elseif(APPLE)
   set(SRCS ${SRCS} GL/GLInterface/AGL.mm)
+elseif(HAIKU)
+  set(SRCS ${SRCS} GL/GLInterface/BGL.cpp)
+  set(LIBS ${LIBS} be GL)
 elseif(USE_X11)
   if (NOT USE_EGL)
     set(SRCS ${SRCS} GL/GLInterface/GLX.cpp)
@@ -120,4 +120,7 @@ add_dolphin_library(common "${SRCS}" "${LIBS}")
 if(UNIX)
   # Posix networking code needs to be fixed for Windows
   add_executable(traversal_server TraversalServer.cpp)
+  if(HAIKU)
+    target_link_libraries(traversal_server network)
+  endif()
 endif()

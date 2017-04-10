@@ -30,7 +30,7 @@
 #include "DolphinWX/WxUtils.h"
 
 #if defined(HAVE_XRANDR) && HAVE_XRANDR
-#include "DolphinWX/X11Utils.h"
+#include "UICommon/X11Utils.h"
 #endif
 
 static const std::array<std::string, 29> language_ids{{
@@ -187,9 +187,9 @@ void InterfaceConfigPane::LoadGUIValues()
 
 void InterfaceConfigPane::LoadThemes()
 {
-  auto sv =
-      DoFileSearch({""}, {File::GetUserPath(D_THEMES_IDX), File::GetSysDirectory() + THEMES_DIR},
-                   /*recursive*/ false);
+  auto sv = Common::DoFileSearch(
+      {""}, {File::GetUserPath(D_THEMES_IDX), File::GetSysDirectory() + THEMES_DIR},
+      /*recursive*/ false);
   for (const std::string& filename : sv)
   {
     std::string name, ext;
