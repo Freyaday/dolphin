@@ -9,6 +9,7 @@
 #include <memory>
 #include <string>
 #include <strsafe.h>
+#include <tuple>
 #include <unordered_map>
 
 #include "Common/CommonTypes.h"
@@ -1084,11 +1085,6 @@ void Renderer::SetLogicOpMode()
   }
 }
 
-void Renderer::SetDitherMode()
-{
-  // TODO: Set dither mode to bpmem.blendmode.dither
-}
-
 void Renderer::SetSamplerState(int stage, int texindex, bool custom_tex)
 {
   const FourTexUnits& tex = bpmem.tex[texindex];
@@ -1173,7 +1169,7 @@ void Renderer::BlitScreen(TargetRectangle src, TargetRectangle dst, D3DTexture2D
   if (g_ActiveConfig.iStereoMode == STEREO_SBS || g_ActiveConfig.iStereoMode == STEREO_TAB)
   {
     TargetRectangle leftRc, rightRc;
-    ConvertStereoRectangle(dst, leftRc, rightRc);
+    std::tie(leftRc, rightRc) = ConvertStereoRectangle(dst);
 
     D3D11_VIEWPORT leftVp = CD3D11_VIEWPORT((float)leftRc.left, (float)leftRc.top,
                                             (float)leftRc.GetWidth(), (float)leftRc.GetHeight());

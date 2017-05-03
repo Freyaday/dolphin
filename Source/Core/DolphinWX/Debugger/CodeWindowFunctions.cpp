@@ -3,8 +3,10 @@
 // Refer to the license.txt file included.
 
 #include <cstddef>
+#include <cstdlib>
 #include <fstream>
 #include <istream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -29,6 +31,7 @@
 #include "Core/Boot/Boot.h"
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
+#include "Core/Debugger/RSO.h"
 #include "Core/HLE/HLE.h"
 #include "Core/Host.h"
 #include "Core/PowerPC/JitInterface.h"
@@ -80,8 +83,8 @@ void CCodeWindow::Load()
     ini.GetOrCreateSection("ShowOnStart")->Get(SettingName[i], &bShowOnStart[i], false);
 
   // Get notebook affiliation
-  std::string section = "P - " + ((Parent->ActivePerspective < Parent->Perspectives.size()) ?
-                                      Parent->Perspectives[Parent->ActivePerspective].Name :
+  std::string section = "P - " + ((Parent->m_active_perspective < Parent->m_perspectives.size()) ?
+                                      Parent->m_perspectives[Parent->m_active_perspective].name :
                                       "Perspective 1");
 
   for (int i = 0; i <= IDM_CODE_WINDOW - IDM_LOG_WINDOW; i++)
@@ -89,7 +92,7 @@ void CCodeWindow::Load()
 
   // Get floating setting
   for (int i = 0; i <= IDM_CODE_WINDOW - IDM_LOG_WINDOW; i++)
-    ini.GetOrCreateSection("Float")->Get(SettingName[i], &Parent->bFloatWindow[i], false);
+    ini.GetOrCreateSection("Float")->Get(SettingName[i], &Parent->m_float_window[i], false);
 }
 
 void CCodeWindow::Save()
@@ -111,7 +114,7 @@ void CCodeWindow::Save()
         ->Set(SettingName[i - IDM_LOG_WINDOW], GetParentMenuBar()->IsChecked(i));
 
   // Save notebook affiliations
-  std::string section = "P - " + Parent->Perspectives[Parent->ActivePerspective].Name;
+  std::string section = "P - " + Parent->m_perspectives[Parent->m_active_perspective].name;
   for (int i = 0; i <= IDM_CODE_WINDOW - IDM_LOG_WINDOW; i++)
     ini.GetOrCreateSection(section)->Set(SettingName[i], iNbAffiliation[i]);
 
@@ -163,7 +166,8 @@ void CCodeWindow::OnSymbolsMenu(wxCommandEvent& event)
 {
   static const wxString signature_selector = _("Dolphin Signature File (*.dsy)") + "|*.dsy|" +
                                              _("Dolphin Signature CSV File (*.csv)") + "|*.csv|" +
-                                             wxGetTranslation(wxALL_FILES);
+                                             _("WiiTools Signature MEGA File (*.mega)") +
+                                             "|*.mega|" + wxGetTranslation(wxALL_FILES);
   Parent->ClearStatusBar();
 
   if (!Core::IsRunning())
@@ -187,7 +191,7 @@ void CCodeWindow::OnSymbolsMenu(wxCommandEvent& event)
   case IDM_SCAN_SIGNATURES:
   {
     PPCAnalyst::FindFunctions(0x80000000, 0x81800000, &g_symbolDB);
-    SignatureDB db;
+    SignatureDB db(SignatureDB::HandlerType::DSY);
     if (db.Load(File::GetSysDirectory() + TOTALDB))
     {
       db.Apply(&g_symbolDB);
@@ -202,12 +206,41 @@ void CCodeWindow::OnSymbolsMenu(wxCommandEvent& event)
     NotifyMapLoaded();
     break;
   }
+  case IDM_SCAN_RSO:
+  {
+    wxTextEntryDialog dialog(this, _("Enter the RSO module address:"));
+    if (dialog.ShowModal() == wxID_OK)
+    {
+      unsigned long address;
+      if (dialog.GetValue().ToULong(&address, 0) && address <= std::numeric_limits<u32>::max())
+      {
+        RSOChainView rso_chain;
+        if (rso_chain.Load(static_cast<u32>(address)))
+        {
+          rso_chain.Apply(&g_symbolDB);
+          // Update GUI
+          NotifyMapLoaded();
+        }
+        else
+        {
+          Parent->StatusBarMessage("Failed to load RSO module at %s",
+                                   dialog.GetValue().ToStdString().c_str());
+        }
+      }
+      else
+      {
+        Parent->StatusBarMessage("Invalid RSO module address: %s",
+                                 dialog.GetValue().ToStdString().c_str());
+      }
+    }
+    break;
+  }
   case IDM_LOAD_MAP_FILE:
     if (!map_exists)
     {
       g_symbolDB.Clear();
       PPCAnalyst::FindFunctions(0x81300000, 0x81800000, &g_symbolDB);
-      SignatureDB db;
+      SignatureDB db(SignatureDB::HandlerType::DSY);
       if (db.Load(File::GetSysDirectory() + TOTALDB))
         db.Apply(&g_symbolDB);
       Parent->StatusBarMessage("'%s' not found, scanning for common functions instead",
@@ -320,9 +353,10 @@ void CCodeWindow::OnSymbolsMenu(wxCommandEvent& event)
                                      wxFD_SAVE | wxFD_OVERWRITE_PROMPT, this);
       if (!path.IsEmpty())
       {
-        SignatureDB db;
-        db.Initialize(&g_symbolDB, prefix);
-        db.Save(WxStrToStr(path));
+        std::string save_path = WxStrToStr(path);
+        SignatureDB db(save_path);
+        db.Populate(&g_symbolDB, prefix);
+        db.Save(save_path);
         db.List();
       }
     }
@@ -343,11 +377,12 @@ void CCodeWindow::OnSymbolsMenu(wxCommandEvent& event)
                          wxEmptyString, signature_selector, wxFD_SAVE, this);
       if (!path.IsEmpty())
       {
-        SignatureDB db;
-        db.Initialize(&g_symbolDB, prefix);
+        std::string signature_path = WxStrToStr(path);
+        SignatureDB db(signature_path);
+        db.Populate(&g_symbolDB, prefix);
         db.List();
-        db.Load(WxStrToStr(path));
-        db.Save(WxStrToStr(path));
+        db.Load(signature_path);
+        db.Save(signature_path);
         db.List();
       }
     }
@@ -360,8 +395,9 @@ void CCodeWindow::OnSymbolsMenu(wxCommandEvent& event)
                        wxEmptyString, signature_selector, wxFD_OPEN | wxFD_FILE_MUST_EXIST, this);
     if (!path.IsEmpty())
     {
-      SignatureDB db;
-      db.Load(WxStrToStr(path));
+      std::string load_path = WxStrToStr(path);
+      SignatureDB db(load_path);
+      db.Load(load_path);
       db.Apply(&g_symbolDB);
       db.List();
       NotifyMapLoaded();
@@ -375,14 +411,15 @@ void CCodeWindow::OnSymbolsMenu(wxCommandEvent& event)
                        wxEmptyString, signature_selector, wxFD_OPEN | wxFD_FILE_MUST_EXIST, this);
     if (!path1.IsEmpty())
     {
-      SignatureDB db;
+      std::string load_path1 = WxStrToStr(path1);
+      SignatureDB db(load_path1);
       wxString path2 =
           wxFileSelector(_("Choose secondary input file"), File::GetSysDirectory(), wxEmptyString,
                          wxEmptyString, signature_selector, wxFD_OPEN | wxFD_FILE_MUST_EXIST, this);
       if (!path2.IsEmpty())
       {
+        db.Load(load_path1);
         db.Load(WxStrToStr(path2));
-        db.Load(WxStrToStr(path1));
 
         path2 = wxFileSelector(_("Save combined output file as"), File::GetSysDirectory(),
                                wxEmptyString, ".dsy", signature_selector,
@@ -390,22 +427,6 @@ void CCodeWindow::OnSymbolsMenu(wxCommandEvent& event)
         db.Save(WxStrToStr(path2));
         db.List();
       }
-    }
-  }
-  break;
-  case IDM_USE_MEGA_SIGNATURE_FILE:
-  {
-    wxString path = wxFileSelector(
-        _("Apply MEGA signature file"), File::GetSysDirectory(), wxEmptyString, wxEmptyString,
-        _("MEGA Signature File (*.mega)") + "|*.mega|" + wxGetTranslation(wxALL_FILES),
-        wxFD_OPEN | wxFD_FILE_MUST_EXIST, this);
-    if (!path.IsEmpty())
-    {
-      MEGASignatureDB db;
-      db.Load(WxStrToStr(path));
-      db.Apply(&g_symbolDB);
-      db.List();
-      NotifyMapLoaded();
     }
   }
   break;
@@ -504,7 +525,7 @@ void CCodeWindow::TogglePanel(int id, bool show)
       panel = CreateSiblingPanel(id);
     }
     Parent->DoAddPage(panel, iNbAffiliation[id - IDM_DEBUG_WINDOW_LIST_START],
-                      Parent->bFloatWindow[id - IDM_DEBUG_WINDOW_LIST_START]);
+                      Parent->m_float_window[id - IDM_DEBUG_WINDOW_LIST_START]);
   }
   else if (panel)  // Close
   {

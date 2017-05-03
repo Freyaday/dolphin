@@ -77,6 +77,7 @@ void VideoBackend::InitBackendInfo()
   g_Config.backend_info.bSupportsMultithreading = false;
   g_Config.backend_info.bSupportsInternalResolutionFrameDumps = false;
   g_Config.backend_info.bSupportsGPUTextureDecoding = false;
+  g_Config.backend_info.bSupportsST3CTextures = false;
 
   IDXGIFactory* factory;
   IDXGIAdapter* ad;
@@ -127,10 +128,6 @@ void VideoBackend::InitBackendInfo()
     ad->Release();
   }
   factory->Release();
-
-  // Clear ppshaders string vector
-  g_Config.backend_info.PPShaders.clear();
-  g_Config.backend_info.AnaglyphShaders.clear();
 
   DX11::D3D::UnloadDXGI();
   DX11::D3D::UnloadD3D();

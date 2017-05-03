@@ -27,7 +27,7 @@
 #include "Core/HW/Memmap.h"
 #include "Core/HW/VideoInterface.h"
 #include "Core/Host.h"
-#include "Core/IOS/IPC.h"
+#include "Core/IOS/IOS.h"
 #include "Core/PatchEngine.h"
 #include "Core/PowerPC/PPCAnalyst.h"
 #include "Core/PowerPC/PPCSymbolDB.h"
@@ -79,6 +79,12 @@ void CBoot::Load_FST(bool is_wii)
   DVDRead(fst_offset << shift, arena_high, fst_size << shift, is_wii);
   Memory::Write_U32(arena_high, 0x00000038);
   Memory::Write_U32(max_fst_size << shift, 0x0000003c);
+
+  if (is_wii)
+  {
+    // the apploader changes IOS MEM1_ARENA_END too
+    Memory::Write_U32(arena_high, 0x00003110);
+  }
 }
 
 void CBoot::UpdateDebugger_MapLoaded()
@@ -302,7 +308,7 @@ bool CBoot::BootUp()
     if (_StartupPara.bHLE_BS2 && !_StartupPara.bEnableDebugging)
     {
       PPCAnalyst::FindFunctions(0x80004000, 0x811fffff, &g_symbolDB);
-      SignatureDB db;
+      SignatureDB db(SignatureDB::HandlerType::DSY);
       if (db.Load(File::GetSysDirectory() + TOTALDB))
       {
         db.Apply(&g_symbolDB);
@@ -333,29 +339,19 @@ bool CBoot::BootUp()
       PanicAlertT("Warning - starting DOL in wrong console mode!");
     }
 
-    bool BS2Success = false;
-
-    if (dolWii)
-    {
-      BS2Success = EmulatedBS2(dolWii);
-    }
-    else if ((!DVDInterface::IsDiscInside() ||
-              DVDInterface::GetVolume().GetVolumeType() != DiscIO::Platform::WII_DISC) &&
-             !_StartupPara.m_strDefaultISO.empty())
-    {
-      DVDInterface::SetVolumeName(_StartupPara.m_strDefaultISO);
-      BS2Success = EmulatedBS2(dolWii);
-    }
-
     if (!_StartupPara.m_strDVDRoot.empty())
     {
       NOTICE_LOG(BOOT, "Setting DVDRoot %s", _StartupPara.m_strDVDRoot.c_str());
       DVDInterface::SetVolumeDirectory(_StartupPara.m_strDVDRoot, dolWii,
                                        _StartupPara.m_strApploader, _StartupPara.m_strFilename);
-      BS2Success = EmulatedBS2(dolWii);
+    }
+    else if (!_StartupPara.m_strDefaultISO.empty())
+    {
+      NOTICE_LOG(BOOT, "Loading default ISO %s", _StartupPara.m_strDefaultISO.c_str());
+      DVDInterface::SetVolumeName(_StartupPara.m_strDefaultISO);
     }
 
-    if (!BS2Success)
+    if (!EmulatedBS2(dolWii))
     {
       // Set up MSR and the BAT SPR registers.
       UReg_MSR& m_MSR = ((UReg_MSR&)PowerPC::ppcState.msr);
@@ -409,10 +405,6 @@ bool CBoot::BootUp()
       NOTICE_LOG(BOOT, "Loading default ISO %s", _StartupPara.m_strDefaultISO.c_str());
       DVDInterface::SetVolumeName(_StartupPara.m_strDefaultISO);
     }
-    else
-    {
-      DVDInterface::SetVolumeDirectory(_StartupPara.m_strFilename, _StartupPara.bWii);
-    }
 
     // Poor man's bootup
     if (_StartupPara.bWii)
@@ -441,8 +433,9 @@ bool CBoot::BootUp()
 
     PatchEngine::LoadPatches();
 
-    if (LoadMapFromFilename())
-      HLE::PatchFunctions();
+    // Not bootstrapped yet, can't translate memory addresses. Thus, prevents Symbol Map usage.
+    // if (LoadMapFromFilename())
+    //   HLE::PatchFunctions();
 
     // load default image or create virtual drive from directory
     if (!_StartupPara.m_strDVDRoot.empty())

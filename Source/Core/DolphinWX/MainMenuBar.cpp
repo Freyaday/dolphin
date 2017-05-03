@@ -215,11 +215,15 @@ wxMenu* MainMenuBar::CreateToolsMenu() const
   tools_menu->Append(IDM_MEMCARD, _("&Memory Card Manager (GC)"));
   tools_menu->Append(IDM_IMPORT_SAVE, _("Import Wii Save..."));
   tools_menu->Append(IDM_EXPORT_ALL_SAVE, _("Export All Wii Saves"));
+  tools_menu->AppendSeparator();
   tools_menu->Append(IDM_CHEATS, _("&Cheat Manager"));
   tools_menu->Append(IDM_NETPLAY, _("Start &NetPlay..."));
+  tools_menu->Append(IDM_FIFOPLAYER, _("FIFO Player"));
+  tools_menu->AppendSeparator();
   tools_menu->Append(IDM_MENU_INSTALL_WAD, _("Install WAD..."));
   tools_menu->Append(IDM_LOAD_WII_MENU, dummy_string);
-  tools_menu->Append(IDM_FIFOPLAYER, _("FIFO Player"));
+  tools_menu->Append(IDM_IMPORT_NAND, _("Import BootMii NAND Backup..."));
+  tools_menu->Append(IDM_EXTRACT_CERTIFICATES, _("Extract Certificates from NAND"));
   tools_menu->AppendSeparator();
   tools_menu->AppendSubMenu(wiimote_menu, _("Connect Wii Remotes"));
 
@@ -276,6 +280,8 @@ wxMenu* MainMenuBar::CreateViewMenu() const
   columns_menu->Check(IDM_SHOW_SYSTEM, config_instance.m_showSystemColumn);
   columns_menu->AppendCheckItem(IDM_SHOW_BANNER, _("Banner"));
   columns_menu->Check(IDM_SHOW_BANNER, config_instance.m_showBannerColumn);
+  columns_menu->AppendCheckItem(IDM_SHOW_TITLE, _("Title"));
+  columns_menu->Check(IDM_SHOW_TITLE, config_instance.m_showTitleColumn);
   columns_menu->AppendCheckItem(IDM_SHOW_MAKER, _("Maker"));
   columns_menu->Check(IDM_SHOW_MAKER, config_instance.m_showMakerColumn);
   columns_menu->AppendCheckItem(IDM_SHOW_FILENAME, _("File Name"));
@@ -423,6 +429,8 @@ wxMenu* MainMenuBar::CreateSymbolsMenu() const
       IDM_SCAN_SIGNATURES, _("&Signature Database"),
       _("Recognise standard functions from Sys/totaldb.dsy, and use generic zz_ "
         "names for other functions."));
+  generate_symbols_menu->Append(IDM_SCAN_RSO, _("&RSO Modules"),
+                                _("Find functions based on RSO modules (experimental)..."));
   symbols_menu->AppendSubMenu(generate_symbols_menu, _("&Generate Symbols From"));
   symbols_menu->AppendSeparator();
   symbols_menu->Append(IDM_LOAD_MAP_FILE, _("&Load Symbol Map"),
@@ -463,11 +471,7 @@ wxMenu* MainMenuBar::CreateSymbolsMenu() const
   symbols_menu->Append(
       IDM_USE_SIGNATURE_FILE, _("Apply Signat&ure File..."),
       _("Must use Generate Symbols first! Recognise names of any standard library functions "
-        "used in multiple games, by loading them from a .dsy file."));
-  symbols_menu->Append(
-      IDM_USE_MEGA_SIGNATURE_FILE, _("Apply &MEGA Signature File..."),
-      _("Must use Generate Symbols first! Recognise names of any standard library functions "
-        "used in multiple games, by loading them from a .mega file."));
+        "used in multiple games, by loading them from a .dsy, .csv, or .mega file."));
   symbols_menu->AppendSeparator();
   symbols_menu->Append(IDM_PATCH_HLE_FUNCTIONS, _("&Patch HLE Functions"));
   symbols_menu->Append(IDM_RENAME_SYMBOLS, _("&Rename Symbols from File..."));

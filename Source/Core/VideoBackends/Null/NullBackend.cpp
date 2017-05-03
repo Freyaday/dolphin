@@ -45,12 +45,11 @@ void VideoBackend::InitBackendInfo()
   g_Config.backend_info.bSupportsMultithreading = false;
   g_Config.backend_info.bSupportsInternalResolutionFrameDumps = false;
   g_Config.backend_info.bSupportsGPUTextureDecoding = false;
+  g_Config.backend_info.bSupportsST3CTextures = false;
 
   // aamodes: We only support 1 sample, so no MSAA
   g_Config.backend_info.Adapters.clear();
   g_Config.backend_info.AAModes = {1};
-  g_Config.backend_info.PPShaders.clear();
-  g_Config.backend_info.AnaglyphShaders.clear();
 }
 
 bool VideoBackend::Initialize(void* window_handle)

@@ -53,6 +53,20 @@ bool IsDepthFormat(VkFormat format)
   }
 }
 
+bool IsCompressedFormat(VkFormat format)
+{
+  switch (format)
+  {
+  case VK_FORMAT_BC1_RGBA_UNORM_BLOCK:
+  case VK_FORMAT_BC2_UNORM_BLOCK:
+  case VK_FORMAT_BC3_UNORM_BLOCK:
+    return true;
+
+  default:
+    return false;
+  }
+}
+
 VkFormat GetLinearFormat(VkFormat format)
 {
   switch (format)
@@ -74,6 +88,25 @@ VkFormat GetLinearFormat(VkFormat format)
   }
 }
 
+VkFormat GetVkFormatForHostTextureFormat(HostTextureFormat format)
+{
+  switch (format)
+  {
+  case HostTextureFormat::DXT1:
+    return VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
+
+  case HostTextureFormat::DXT3:
+    return VK_FORMAT_BC2_UNORM_BLOCK;
+
+  case HostTextureFormat::DXT5:
+    return VK_FORMAT_BC3_UNORM_BLOCK;
+
+  case HostTextureFormat::RGBA8:
+  default:
+    return VK_FORMAT_R8G8B8A8_UNORM;
+  }
+}
+
 u32 GetTexelSize(VkFormat format)
 {
   // Only contains pixel formats we use.
@@ -91,10 +124,41 @@ u32 GetTexelSize(VkFormat format)
   case VK_FORMAT_B8G8R8A8_UNORM:
     return 4;
 
+  case VK_FORMAT_BC1_RGBA_UNORM_BLOCK:
+    return 8;
+
+  case VK_FORMAT_BC2_UNORM_BLOCK:
+  case VK_FORMAT_BC3_UNORM_BLOCK:
+    return 16;
+
   default:
     PanicAlert("Unhandled pixel format");
     return 1;
   }
+}
+
+u32 GetBlockSize(VkFormat format)
+{
+  switch (format)
+  {
+  case VK_FORMAT_BC1_RGBA_UNORM_BLOCK:
+  case VK_FORMAT_BC2_UNORM_BLOCK:
+  case VK_FORMAT_BC3_UNORM_BLOCK:
+    return 4;
+
+  default:
+    return 1;
+  }
+}
+
+VkRect2D ClampRect2D(const VkRect2D& rect, u32 width, u32 height)
+{
+  VkRect2D out;
+  out.offset.x = MathUtil::Clamp(rect.offset.x, 0, static_cast<int32_t>(width - 1));
+  out.offset.y = MathUtil::Clamp(rect.offset.y, 0, static_cast<int32_t>(height - 1));
+  out.extent.width = std::min(rect.extent.width, width - static_cast<uint32_t>(rect.offset.x));
+  out.extent.height = std::min(rect.extent.height, height - static_cast<uint32_t>(rect.offset.y));
+  return out;
 }
 
 VkBlendFactor GetAlphaBlendFactor(VkBlendFactor factor)
@@ -133,20 +197,17 @@ DepthStencilState GetNoDepthTestingDepthStencilState()
   return state;
 }
 
-BlendState GetNoBlendingBlendState()
+BlendingState GetNoBlendingBlendState()
 {
-  BlendState state = {};
-  state.blend_enable = VK_FALSE;
-  state.blend_op = VK_BLEND_OP_ADD;
-  state.src_blend = VK_BLEND_FACTOR_ONE;
-  state.dst_blend = VK_BLEND_FACTOR_ZERO;
-  state.alpha_blend_op = VK_BLEND_OP_ADD;
-  state.src_alpha_blend = VK_BLEND_FACTOR_ONE;
-  state.dst_alpha_blend = VK_BLEND_FACTOR_ZERO;
-  state.logic_op_enable = VK_FALSE;
-  state.logic_op = VK_LOGIC_OP_CLEAR;
-  state.write_mask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-                     VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  BlendingState state = {};
+  state.blendenable = false;
+  state.srcfactor = BlendMode::ONE;
+  state.srcfactoralpha = BlendMode::ZERO;
+  state.dstfactor = BlendMode::ONE;
+  state.dstfactoralpha = BlendMode::ZERO;
+  state.logicopenable = false;
+  state.colorupdate = true;
+  state.alphaupdate = true;
   return state;
 }
 
@@ -279,7 +340,7 @@ UtilityShaderDraw::UtilityShaderDraw(VkCommandBuffer command_buffer,
   m_pipeline_info.ps = pixel_shader;
   m_pipeline_info.rasterization_state.bits = Util::GetNoCullRasterizationState().bits;
   m_pipeline_info.depth_stencil_state.bits = Util::GetNoDepthTestingDepthStencilState().bits;
-  m_pipeline_info.blend_state.bits = Util::GetNoBlendingBlendState().bits;
+  m_pipeline_info.blend_state.hex = Util::GetNoBlendingBlendState().hex;
   m_pipeline_info.primitive_topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 }
 
@@ -387,9 +448,9 @@ void UtilityShaderDraw::SetDepthStencilState(const DepthStencilState& state)
   m_pipeline_info.depth_stencil_state.bits = state.bits;
 }
 
-void UtilityShaderDraw::SetBlendState(const BlendState& state)
+void UtilityShaderDraw::SetBlendState(const BlendingState& state)
 {
-  m_pipeline_info.blend_state.bits = state.bits;
+  m_pipeline_info.blend_state.hex = state.hex;
 }
 
 void UtilityShaderDraw::BeginRenderPass(VkFramebuffer framebuffer, const VkRect2D& region,

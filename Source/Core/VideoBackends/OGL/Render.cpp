@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "Common/Atomic.h"
@@ -461,6 +462,8 @@ Renderer::Renderer()
   g_ogl_config.bSupportsConservativeDepth = GLExtensions::Supports("GL_ARB_conservative_depth");
   g_ogl_config.bSupportsAniso = GLExtensions::Supports("GL_EXT_texture_filter_anisotropic");
   g_Config.backend_info.bSupportsComputeShaders = GLExtensions::Supports("GL_ARB_compute_shader");
+  g_Config.backend_info.bSupportsST3CTextures =
+      GLExtensions::Supports("GL_EXT_texture_compression_s3tc");
 
   if (GLInterface->GetMode() == GLInterfaceMode::MODE_OPENGLES3)
   {
@@ -1175,22 +1178,23 @@ void Renderer::ClearScreen(const EFBRectangle& rc, bool colorEnable, bool alphaE
 void Renderer::BlitScreen(TargetRectangle src, TargetRectangle dst, GLuint src_texture,
                           int src_width, int src_height)
 {
+  OpenGLPostProcessing* post_processor = static_cast<OpenGLPostProcessing*>(m_post_processor.get());
   if (g_ActiveConfig.iStereoMode == STEREO_SBS || g_ActiveConfig.iStereoMode == STEREO_TAB)
   {
     TargetRectangle leftRc, rightRc;
 
     // Top-and-Bottom mode needs to compensate for inverted vertical screen coordinates.
     if (g_ActiveConfig.iStereoMode == STEREO_TAB)
-      ConvertStereoRectangle(dst, rightRc, leftRc);
+      std::tie(rightRc, leftRc) = ConvertStereoRectangle(dst);
     else
-      ConvertStereoRectangle(dst, leftRc, rightRc);
+      std::tie(leftRc, rightRc) = ConvertStereoRectangle(dst);
 
-    m_post_processor->BlitFromTexture(src, leftRc, src_texture, src_width, src_height, 0);
-    m_post_processor->BlitFromTexture(src, rightRc, src_texture, src_width, src_height, 1);
+    post_processor->BlitFromTexture(src, leftRc, src_texture, src_width, src_height, 0);
+    post_processor->BlitFromTexture(src, rightRc, src_texture, src_width, src_height, 1);
   }
   else
   {
-    m_post_processor->BlitFromTexture(src, dst, src_texture, src_width, src_height);
+    post_processor->BlitFromTexture(src, dst, src_texture, src_width, src_height, 0);
   }
 }
 
@@ -1213,7 +1217,7 @@ void Renderer::SetBlendMode(bool forceUpdate)
   state.Generate(bpmem);
 
   bool useDualSource =
-      g_ActiveConfig.backend_info.bSupportsDualSourceBlend &&
+      state.usedualsrc && g_ActiveConfig.backend_info.bSupportsDualSourceBlend &&
       (!DriverDetails::HasBug(DriverDetails::BUG_BROKEN_DUAL_SOURCE_BLENDING) || state.dstalpha);
 
   const GLenum src_factors[8] = {
@@ -1272,11 +1276,6 @@ void Renderer::SetBlendMode(bool forceUpdate)
   {
     glDisable(GL_COLOR_LOGIC_OP);
   }
-
-  if (state.dither)
-    glEnable(GL_DITHER);
-  else
-    glDisable(GL_DITHER);
 
   glColorMask(state.colorupdate, state.colorupdate, state.colorupdate, state.alphaupdate);
 }

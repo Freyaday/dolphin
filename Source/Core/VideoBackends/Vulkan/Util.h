@@ -10,6 +10,7 @@
 #include "Common/CommonTypes.h"
 #include "VideoBackends/Vulkan/Constants.h"
 #include "VideoBackends/Vulkan/ObjectCache.h"
+#include "VideoCommon/RenderState.h"
 
 namespace Vulkan
 {
@@ -24,15 +25,21 @@ size_t AlignBufferOffset(size_t offset, size_t alignment);
 u32 MakeRGBA8Color(float r, float g, float b, float a);
 
 bool IsDepthFormat(VkFormat format);
+bool IsCompressedFormat(VkFormat format);
 VkFormat GetLinearFormat(VkFormat format);
+VkFormat GetVkFormatForHostTextureFormat(HostTextureFormat format);
 u32 GetTexelSize(VkFormat format);
+u32 GetBlockSize(VkFormat format);
+
+// Clamps a VkRect2D to the specified dimensions.
+VkRect2D ClampRect2D(const VkRect2D& rect, u32 width, u32 height);
 
 // Map {SRC,DST}_COLOR to {SRC,DST}_ALPHA
 VkBlendFactor GetAlphaBlendFactor(VkBlendFactor factor);
 
 RasterizationState GetNoCullRasterizationState();
 DepthStencilState GetNoDepthTestingDepthStencilState();
-BlendState GetNoBlendingBlendState();
+BlendingState GetNoBlendingBlendState();
 
 // Combines viewport and scissor updates
 void SetViewportAndScissor(VkCommandBuffer command_buffer, int x, int y, int width, int height,
@@ -144,7 +151,7 @@ public:
 
   void SetRasterizationState(const RasterizationState& state);
   void SetDepthStencilState(const DepthStencilState& state);
-  void SetBlendState(const BlendState& state);
+  void SetBlendState(const BlendingState& state);
 
   void BeginRenderPass(VkFramebuffer framebuffer, const VkRect2D& region,
                        const VkClearValue* clear_value = nullptr);
