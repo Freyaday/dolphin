@@ -26,18 +26,15 @@ GuitarInputConfigDialog::GuitarInputConfigDialog(wxWindow* const parent, InputCo
   buttons_strum_sizer->AddSpacer(space5);
   buttons_strum_sizer->Add(group_left_strum, 0, wxEXPAND);
 
-  auto* const group_box_whammy = new ControlGroupBox(
-    Wiimote::GetGuitarGroup(port_num, WiimoteEmu::GuitarGroup::Whammy), this, this);
-  auto* const group_box_slider_bar = new ControlGroupBox(
-    Wiimote::GetGuitarGroup(port_num, WiimoteEmu::GuitarGroup::SliderBar), this, this);
-
-  auto* const whammy_slider_bar_sizer = new wxBoxSizer(wxVERTICAL);
-  whammy_slider_bar_sizer->Add(group_box_whammy, 0, wxEXPAND);
-  whammy_slider_bar_sizer->AddSpacer(space5);
-  whammy_slider_bar_sizer->Add(group_box_slider_bar, 0, wxEXPAND);
-
   auto* const group_box_frets = new ControlGroupBox(
       Wiimote::GetGuitarGroup(port_num, WiimoteEmu::GuitarGroup::Frets), this, this);
+  ControlGroupBox* group_box_whammy = new ControlGroupBox(
+      Wiimote::GetGuitarGroup(port_num, WiimoteEmu::GuitarGroup::Whammy), this, this);
+
+  auto* const frets_whammy_sizer = new wxBoxSizer(wxVERTICAL);
+  frets_whammy_sizer->Add(group_box_frets, 0, wxEXPAND);
+  frets_whammy_sizer->AddSpacer(space5);
+  frets_whammy_sizer->Add(group_box_whammy, 0, wxEXPAND);
 
   auto* const group_box_stick = new ControlGroupBox(
       Wiimote::GetGuitarGroup(port_num, WiimoteEmu::GuitarGroup::Stick), this, this);
@@ -46,9 +43,7 @@ GuitarInputConfigDialog::GuitarInputConfigDialog(wxWindow* const parent, InputCo
   controls_sizer->AddSpacer(space5);
   controls_sizer->Add(buttons_strum_sizer, 0, wxEXPAND);
   controls_sizer->AddSpacer(space5);
-  controls_sizer->Add(whammy_slider_bar_sizer, 0, wxEXPAND);
-  controls_sizer->AddSpacer(space5);
-  controls_sizer->Add(group_box_frets, 0, wxEXPAND);
+  controls_sizer->Add(frets_whammy_sizer, 0, wxEXPAND);
   controls_sizer->AddSpacer(space5);
   controls_sizer->Add(group_box_stick, 0, wxEXPAND);
   controls_sizer->AddSpacer(space5);
