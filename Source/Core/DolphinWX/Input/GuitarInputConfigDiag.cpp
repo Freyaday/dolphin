@@ -21,7 +21,7 @@ GuitarInputConfigDialog::GuitarInputConfigDialog(wxWindow* const parent, InputCo
   auto* const group_left_strum = new ControlGroupBox(
       Wiimote::GetGuitarGroup(port_num, WiimoteEmu::GuitarGroup::Strum), this, this);
   auto* const group_slider_bar = new ControlGroupBox(
-    Wiimote::GetGuitarGroup(port_num, WiimoteEmu::GuitarGroup::SliderBar), this, this);
+      Wiimote::GetGuitarGroup(port_num, WiimoteEmu::GuitarGroup::SliderBar), this, this);
 
   auto* const buttons_strum_slider_bar_sizer = new wxBoxSizer(wxVERTICAL);
   buttons_strum_slider_bar_sizer->Add(group_box_buttons, 0, wxEXPAND);
