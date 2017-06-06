@@ -50,10 +50,10 @@
 #include "Core/HW/DVD/DVDInterface.h"
 #include "Core/HW/WiiSaveCrypted.h"
 #include "Core/Movie.h"
+#include "Core/TitleDatabase.h"
 #include "DiscIO/Blob.h"
 #include "DiscIO/Enums.h"
 #include "DiscIO/Volume.h"
-#include "DiscIO/VolumeCreator.h"
 #include "DolphinWX/Frame.h"
 #include "DolphinWX/GameListCtrl.h"
 #include "DolphinWX/Globals.h"
@@ -153,37 +153,6 @@ static int CompareGameListItems(const GameListItem* iso1, const GameListItem* is
   }
 
   return 0;
-}
-
-static std::unordered_map<std::string, std::string> LoadCustomTitles()
-{
-  // Load custom game titles from titles.txt
-  // http://www.gametdb.com/Wii/Downloads
-  const std::string& load_directory = File::GetUserPath(D_LOAD_IDX);
-
-  std::ifstream titlestxt;
-  OpenFStream(titlestxt, load_directory + "titles.txt", std::ios::in);
-
-  if (!titlestxt.is_open())
-    OpenFStream(titlestxt, load_directory + "wiitdb.txt", std::ios::in);
-
-  if (!titlestxt.is_open())
-    return {};
-
-  std::unordered_map<std::string, std::string> custom_titles;
-
-  std::string line;
-  while (!titlestxt.eof() && std::getline(titlestxt, line))
-  {
-    const size_t equals_index = line.find('=');
-    if (equals_index != std::string::npos)
-    {
-      custom_titles.emplace(StripSpaces(line.substr(0, equals_index)),
-                            StripSpaces(line.substr(equals_index + 1)));
-    }
-  }
-
-  return custom_titles;
 }
 
 static std::vector<std::string> GetFileSearchExtensions()
@@ -328,11 +297,14 @@ CGameListCtrl::~CGameListCtrl()
 
 template <typename T>
 static void InitBitmap(wxImageList* img_list, std::vector<int>* vector, wxWindow* context,
-                       const wxSize& usable_size, T index, const std::string& name)
+                       const wxSize& usable_size, T index, const std::string& name,
+                       bool themed = false)
 {
   wxSize size = img_list->GetSize();
-  (*vector)[static_cast<size_t>(index)] = img_list->Add(WxUtils::LoadScaledResourceBitmap(
-      name, context, size, usable_size, WxUtils::LSI_SCALE | WxUtils::LSI_ALIGN_VCENTER));
+  auto bitmap_fnc = themed ? WxUtils::LoadScaledThemeBitmap : WxUtils::LoadScaledResourceBitmap;
+  (*vector)[static_cast<size_t>(index)] = img_list->Add(
+      bitmap_fnc(name, context, size, usable_size, WxUtils::LSI_SCALE | WxUtils::LSI_ALIGN_VCENTER,
+                 wxTransparentColour));
 }
 
 void CGameListCtrl::InitBitmaps()
@@ -385,12 +357,12 @@ void CGameListCtrl::InitBitmaps()
              "Platform_File");
 
   m_EmuStateImageIndex.resize(6);
-  InitBitmap(img_list, &m_EmuStateImageIndex, this, rating_bmp_size, 0, "rating0");
-  InitBitmap(img_list, &m_EmuStateImageIndex, this, rating_bmp_size, 1, "rating1");
-  InitBitmap(img_list, &m_EmuStateImageIndex, this, rating_bmp_size, 2, "rating2");
-  InitBitmap(img_list, &m_EmuStateImageIndex, this, rating_bmp_size, 3, "rating3");
-  InitBitmap(img_list, &m_EmuStateImageIndex, this, rating_bmp_size, 4, "rating4");
-  InitBitmap(img_list, &m_EmuStateImageIndex, this, rating_bmp_size, 5, "rating5");
+  InitBitmap(img_list, &m_EmuStateImageIndex, this, rating_bmp_size, 0, "rating0", true);
+  InitBitmap(img_list, &m_EmuStateImageIndex, this, rating_bmp_size, 1, "rating1", true);
+  InitBitmap(img_list, &m_EmuStateImageIndex, this, rating_bmp_size, 2, "rating2", true);
+  InitBitmap(img_list, &m_EmuStateImageIndex, this, rating_bmp_size, 3, "rating3", true);
+  InitBitmap(img_list, &m_EmuStateImageIndex, this, rating_bmp_size, 4, "rating4", true);
+  InitBitmap(img_list, &m_EmuStateImageIndex, this, rating_bmp_size, 5, "rating5", true);
 
   m_utility_game_banners.resize(1);
   InitBitmap(img_list, &m_utility_game_banners, this, size, 0, "nobanner");
@@ -468,6 +440,7 @@ void CGameListCtrl::ReloadList()
     // add all items
     for (int i = 0; i < (int)m_ISOFiles.size(); i++)
       InsertItemInReportView(i);
+    SetColors();
 
     // Sort items by Title
     if (!sorted)
@@ -627,9 +600,6 @@ void CGameListCtrl::InsertItemInReportView(long index)
     if (GetColumnWidth(i) != 0)
       UpdateItemAtColumn(item_index, i);
   }
-
-  // List colors
-  SetColors();
 }
 
 static wxColour blend50(const wxColour& c1, const wxColour& c2)
@@ -657,7 +627,7 @@ void CGameListCtrl::SetColors()
     wxColour color = (i & 1) ? blend50(wxSystemSettings::GetColour(wxSYS_COLOUR_3DLIGHT),
                                        wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOW)) :
                                wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOW);
-    CGameListCtrl::SetItemBackgroundColour(i, color);
+    SetItemBackgroundColour(i, color);
     SetItemTextColour(i, ContrastText(color));
   }
 }
@@ -666,7 +636,7 @@ void CGameListCtrl::ScanForISOs()
 {
   m_ISOFiles.clear();
 
-  const auto custom_titles = LoadCustomTitles();
+  const Core::TitleDatabase title_database;
   auto rFilenames =
       Common::DoFileSearch(GetFileSearchExtensions(), SConfig::GetInstance().m_ISOFolder,
                            SConfig::GetInstance().m_RecursiveISOFolder);
@@ -689,7 +659,7 @@ void CGameListCtrl::ScanForISOs()
       if (dialog.WasCancelled())
         break;
 
-      auto iso_file = std::make_unique<GameListItem>(rFilenames[i], custom_titles);
+      auto iso_file = std::make_unique<GameListItem>(rFilenames[i], title_database);
 
       if (iso_file->IsValid() && ShouldDisplayGameListItem(*iso_file))
       {
@@ -704,7 +674,7 @@ void CGameListCtrl::ScanForISOs()
 
     for (const auto& drive : drives)
     {
-      auto gli = std::make_unique<GameListItem>(drive, custom_titles);
+      auto gli = std::make_unique<GameListItem>(drive, title_database);
 
       if (gli->IsValid())
         m_ISOFiles.push_back(std::move(gli));
@@ -959,15 +929,10 @@ void CGameListCtrl::OnLeftClick(wxMouseEvent& event)
   event.Skip();
 }
 
-static bool IsWADInstalled(const std::string& wad_path)
+static bool IsWADInstalled(const GameListItem& wad)
 {
-  const auto volume = DiscIO::CreateVolumeFromFilename(wad_path);
-  u64 title_id;
-  if (!volume || !volume->GetTitleID(&title_id))
-    return false;
-
   const std::string content_dir =
-      Common::GetTitleContentPath(title_id, Common::FromWhichRoot::FROM_CONFIGURED_ROOT);
+      Common::GetTitleContentPath(wad.GetTitleID(), Common::FromWhichRoot::FROM_CONFIGURED_ROOT);
 
   if (!File::IsDirectory(content_dir))
     return false;
@@ -1020,7 +985,10 @@ void CGameListCtrl::OnRightClick(wxMouseEvent& event)
         // an inconsistent state; the emulated software can do *anything* to its data directory,
         // and we definitely do not want the user to touch anything in there if it's running.
         for (auto* menu_item : {open_save_folder_item, export_save_item})
-          menu_item->Enable(!Core::IsRunning() || !SConfig::GetInstance().bWii);
+        {
+          menu_item->Enable((!Core::IsRunning() || !SConfig::GetInstance().bWii) &&
+                            File::IsDirectory(selected_iso->GetWiiFSPath()));
+        }
       }
       popupMenu.Append(IDM_OPEN_CONTAINING_FOLDER, _("Open &containing folder"));
 
@@ -1055,7 +1023,7 @@ void CGameListCtrl::OnRightClick(wxMouseEvent& event)
         for (auto* menu_item : {install_wad_item, uninstall_wad_item})
           menu_item->Enable(!Core::IsRunning() || !SConfig::GetInstance().bWii);
 
-        if (!IsWADInstalled(selected_iso->GetFileName()))
+        if (!IsWADInstalled(*selected_iso))
           uninstall_wad_item->Enable(false);
       }
 
@@ -1140,15 +1108,8 @@ void CGameListCtrl::OnOpenSaveFolder(wxCommandEvent& WXUNUSED(event))
 void CGameListCtrl::OnExportSave(wxCommandEvent& WXUNUSED(event))
 {
   const GameListItem* iso = GetSelectedISO();
-  if (!iso)
-    return;
-
-  u64 title_id;
-  std::unique_ptr<DiscIO::IVolume> volume(DiscIO::CreateVolumeFromFilename(iso->GetFileName()));
-  if (volume && volume->GetTitleID(&title_id))
-  {
-    CWiiSaveCrypted::ExportWiiSave(title_id);
-  }
+  if (iso)
+    CWiiSaveCrypted::ExportWiiSave(iso->GetTitleID());
 }
 
 // Save this file as the default file
@@ -1470,7 +1431,7 @@ void CGameListCtrl::AutomaticColumnWidth()
         if (c.resizable)
           visible_columns.push_back(c.id);
         else
-          remaining_width -= c.default_width;
+          remaining_width -= GetColumnWidth(c.id);
       }
     }
 

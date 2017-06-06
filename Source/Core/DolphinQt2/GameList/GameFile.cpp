@@ -8,15 +8,21 @@
 #include <QImage>
 #include <QSharedPointer>
 
+#include "Common/Assert.h"
 #include "Common/FileUtil.h"
+#include "Common/NandPaths.h"
 #include "Core/ConfigManager.h"
+#include "Core/HW/WiiSaveCrypted.h"
+#include "Core/IOS/ES/ES.h"
+#include "Core/IOS/IOS.h"
 #include "DiscIO/Blob.h"
 #include "DiscIO/Enums.h"
+#include "DiscIO/NANDContentLoader.h"
 #include "DiscIO/Volume.h"
-#include "DiscIO/VolumeCreator.h"
 #include "DolphinQt2/GameList/GameFile.h"
 #include "DolphinQt2/Resources.h"
 #include "DolphinQt2/Settings.h"
+#include "UICommon/WiiUtils.h"
 
 static const int CACHE_VERSION = 13;  // Last changed in PR #3261
 static const int DATASTREAM_VERSION = QDataStream::Qt_5_5;
@@ -55,6 +61,17 @@ GameFile::GameFile(const QString& path) : m_path(path)
   }
 
   m_valid = true;
+}
+
+bool GameFile::IsValid() const
+{
+  if (!m_valid)
+    return false;
+
+  if (m_platform == DiscIO::Platform::WII_WAD && !IOS::ES::IsChannel(m_title_id))
+    return false;
+
+  return true;
 }
 
 QString GameFile::GetCacheFileName() const
@@ -144,16 +161,17 @@ bool GameFile::TryLoadVolume()
 
   m_game_id = QString::fromStdString(volume->GetGameID());
   std::string maker_id = volume->GetMakerID();
+  m_title_id = volume->GetTitleID().value_or(0);
   m_maker = QString::fromStdString(DiscIO::GetCompanyFromID(maker_id));
   m_maker_id = QString::fromStdString(maker_id);
-  m_revision = volume->GetRevision();
+  m_revision = volume->GetRevision().value_or(0);
   m_internal_name = QString::fromStdString(volume->GetInternalName());
   m_short_names = ConvertLanguageMap(volume->GetShortNames());
   m_long_names = ConvertLanguageMap(volume->GetLongNames());
   m_short_makers = ConvertLanguageMap(volume->GetShortMakers());
   m_long_makers = ConvertLanguageMap(volume->GetLongMakers());
   m_descriptions = ConvertLanguageMap(volume->GetDescriptions());
-  m_disc_number = volume->GetDiscNumber();
+  m_disc_number = volume->GetDiscNumber().value_or(0);
   m_platform = volume->GetVolumeType();
   m_region = volume->GetRegion();
   m_country = volume->GetCountry();
@@ -199,9 +217,9 @@ QString GameFile::GetBannerString(const QMap<DiscIO::Language, QString>& m) cons
   bool wii = m_platform != DiscIO::Platform::GAMECUBE_DISC;
   DiscIO::Language current_lang;
   if (wii)
-    current_lang = Settings().GetWiiSystemLanguage();
+    current_lang = Settings::Instance().GetWiiSystemLanguage();
   else
-    current_lang = Settings().GetGCSystemLanguage();
+    current_lang = Settings::Instance().GetGCSystemLanguage();
 
   if (m.contains(current_lang))
     return m[current_lang];
@@ -289,6 +307,52 @@ QString GameFile::GetLanguage(DiscIO::Language lang) const
   default:
     return QObject::tr("Unknown");
   }
+}
+
+bool GameFile::IsInstalled() const
+{
+  _assert_(m_platform == DiscIO::Platform::WII_WAD);
+
+  const std::string content_dir =
+      Common::GetTitleContentPath(m_title_id, Common::FromWhichRoot::FROM_CONFIGURED_ROOT);
+
+  if (!File::IsDirectory(content_dir))
+    return false;
+
+  // Since this isn't IOS and we only need a simple way to figure out if a title is installed,
+  // we make the (reasonable) assumption that having more than just the TMD in the content
+  // directory means that the title is installed.
+  const auto entries = File::ScanDirectoryTree(content_dir, false);
+  return std::any_of(entries.children.begin(), entries.children.end(),
+                     [](const auto& file) { return file.virtualName != "title.tmd"; });
+}
+
+bool GameFile::Install()
+{
+  _assert_(m_platform == DiscIO::Platform::WII_WAD);
+
+  return WiiUtils::InstallWAD(m_path.toStdString());
+}
+
+bool GameFile::Uninstall()
+{
+  _assert_(m_platform == DiscIO::Platform::WII_WAD);
+  IOS::HLE::Kernel ios;
+  return ios.GetES()->DeleteTitleContent(m_title_id) == IOS::HLE::IPC_SUCCESS;
+}
+
+bool GameFile::ExportWiiSave()
+{
+  return CWiiSaveCrypted::ExportWiiSave(m_title_id);
+}
+
+QString GameFile::GetWiiFSPath() const
+{
+  _assert_(m_platform == DiscIO::Platform::WII_DISC || m_platform == DiscIO::Platform::WII_WAD);
+
+  const std::string path = Common::GetTitleDataPath(m_title_id, Common::FROM_CONFIGURED_ROOT);
+
+  return QString::fromStdString(path);
 }
 
 // Convert an integer size to a friendly string representation.

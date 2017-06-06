@@ -1,5 +1,8 @@
 set(SRCS
   AudioCommon.cpp
+  AudioStretcher.cpp
+  CubebStream.cpp
+  CubebUtils.cpp
   DPL2Decoder.cpp
   Mixer.cpp
   WaveFile.cpp
@@ -76,4 +79,4 @@ elseif(APPLE)
   target_sources(audiocommon PRIVATE CoreAudioSoundStream.cpp)
 endif()
 
-target_link_libraries(audiocommon PRIVATE SoundTouch)
+target_link_libraries(audiocommon PRIVATE cubeb SoundTouch)

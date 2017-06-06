@@ -28,8 +28,8 @@ signals:
   void FullScreenPressed();
   void ScreenShotPressed();
 
-  void PathsPressed();
   void SettingsPressed();
+  void ControllersPressed();
 
 private:
   void MakeActions();
@@ -41,7 +41,6 @@ private:
   QAction* m_stop_action;
   QAction* m_fullscreen_action;
   QAction* m_screenshot_action;
-  QAction* m_paths_action;
   QAction* m_config_action;
   QAction* m_controllers_action;
 };

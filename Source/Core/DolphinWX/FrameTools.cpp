@@ -23,6 +23,7 @@
 #include <wx/toplevel.h>
 
 #include "Common/CDUtils.h"
+#include "Common/CommonPaths.h"
 #include "Common/CommonTypes.h"
 #include "Common/FileSearch.h"
 #include "Common/FileUtil.h"
@@ -42,6 +43,7 @@
 #include "Core/HW/Wiimote.h"
 #include "Core/Host.h"
 #include "Core/HotkeyManager.h"
+#include "Core/IOS/ES/ES.h"
 #include "Core/IOS/IOS.h"
 #include "Core/IOS/STM/STM.h"
 #include "Core/IOS/USB/Bluetooth/BTEmu.h"
@@ -53,7 +55,6 @@
 
 #include "DiscIO/NANDContentLoader.h"
 #include "DiscIO/NANDImporter.h"
-#include "DiscIO/VolumeCreator.h"
 #include "DiscIO/VolumeWad.h"
 
 #include "DolphinWX/AboutDolphin.h"
@@ -81,6 +82,8 @@
 #include "DolphinWX/WxUtils.h"
 
 #include "InputCommon/ControllerInterface/ControllerInterface.h"
+
+#include "UICommon/WiiUtils.h"
 
 #include "VideoCommon/RenderBase.h"
 #include "VideoCommon/VideoBackendBase.h"
@@ -166,6 +169,9 @@ void CFrame::BindMenuBarEvents()
   Bind(wxEVT_MENU, &CFrame::OnMemcard, this, IDM_MEMCARD);
   Bind(wxEVT_MENU, &CFrame::OnImportSave, this, IDM_IMPORT_SAVE);
   Bind(wxEVT_MENU, &CFrame::OnExportAllSaves, this, IDM_EXPORT_ALL_SAVE);
+  Bind(wxEVT_MENU, &CFrame::OnLoadGameCubeIPLJAP, this, IDM_LOAD_GC_IPL_JAP);
+  Bind(wxEVT_MENU, &CFrame::OnLoadGameCubeIPLUSA, this, IDM_LOAD_GC_IPL_USA);
+  Bind(wxEVT_MENU, &CFrame::OnLoadGameCubeIPLEUR, this, IDM_LOAD_GC_IPL_EUR);
   Bind(wxEVT_MENU, &CFrame::OnShowCheatsWindow, this, IDM_CHEATS);
   Bind(wxEVT_MENU, &CFrame::OnNetPlay, this, IDM_NETPLAY);
   Bind(wxEVT_MENU, &CFrame::OnInstallWAD, this, IDM_MENU_INSTALL_WAD);
@@ -242,7 +248,7 @@ void CFrame::BindDebuggerMenuBarUpdateEvents()
   Bind(wxEVT_UPDATE_UI, &WxEventUtils::OnEnableIfCoreInitialized, IDM_LOAD_MAP_FILE_AS);
   Bind(wxEVT_UPDATE_UI, &WxEventUtils::OnEnableIfCoreInitialized, IDM_SAVE_MAP_FILE_AS);
   Bind(wxEVT_UPDATE_UI, &WxEventUtils::OnEnableIfCoreInitialized, IDM_LOAD_BAD_MAP_FILE);
-  Bind(wxEVT_UPDATE_UI, &WxEventUtils::OnEnableIfCoreInitialized, IDM_SAVE_MAP_FILE_WITH_CODES);
+  Bind(wxEVT_UPDATE_UI, &WxEventUtils::OnEnableIfCorePaused, IDM_SAVE_MAP_FILE_WITH_CODES);
   Bind(wxEVT_UPDATE_UI, &WxEventUtils::OnEnableIfCoreInitialized, IDM_CREATE_SIGNATURE_FILE);
   Bind(wxEVT_UPDATE_UI, &WxEventUtils::OnEnableIfCoreInitialized, IDM_APPEND_SIGNATURE_FILE);
   Bind(wxEVT_UPDATE_UI, &WxEventUtils::OnEnableIfCoreInitialized, IDM_COMBINE_SIGNATURE_FILES);
@@ -303,16 +309,8 @@ void CFrame::BootGame(const std::string& filename)
     }
     else
     {
-      if (!SConfig::GetInstance().m_LastFilename.empty() &&
-          File::Exists(SConfig::GetInstance().m_LastFilename))
-      {
-        bootfile = SConfig::GetInstance().m_LastFilename;
-      }
-      else
-      {
-        m_game_list_ctrl->BrowseForDirectory();
-        return;
-      }
+      m_game_list_ctrl->BrowseForDirectory();
+      return;
     }
   }
   if (!bootfile.empty())
@@ -334,10 +332,9 @@ void CFrame::DoOpen(bool Boot)
 
   wxString path = wxFileSelector(
       _("Select the file to load"), wxEmptyString, wxEmptyString, wxEmptyString,
-      _("All GC/Wii files (elf, dol, gcm, iso, tgc, wbfs, ciso, gcz, wad)") +
-          wxString::Format(
-              "|*.elf;*.dol;*.gcm;*.iso;*.tgc;*.wbfs;*.ciso;*.gcz;*.wad;*.dff;*.tmd|%s",
-              wxGetTranslation(wxALL_FILES)),
+      _("All GC/Wii files (elf, dol, gcm, iso, tgc, wbfs, ciso, gcz, wad, dff)") +
+          wxString::Format("|*.elf;*.dol;*.gcm;*.iso;*.tgc;*.wbfs;*.ciso;*.gcz;*.wad;*.dff|%s",
+                           wxGetTranslation(wxALL_FILES)),
       wxFD_OPEN | wxFD_FILE_MUST_EXIST, this);
 
   if (path.IsEmpty())
@@ -630,7 +627,7 @@ void CFrame::ToggleDisplayMode(bool bFullscreen)
 }
 
 // Prepare the GUI to start the game.
-void CFrame::StartGame(const std::string& filename)
+void CFrame::StartGame(const std::string& filename, SConfig::EBootBS2 type)
 {
   if (m_is_game_loading)
     return;
@@ -706,7 +703,9 @@ void CFrame::StartGame(const std::string& filename)
 
   DoFullscreen(SConfig::GetInstance().bFullscreen);
 
-  if (!BootManager::BootCore(filename))
+  SetDebuggerStartupParameters();
+
+  if (!BootManager::BootCore(filename, type))
   {
     DoFullscreen(false);
 
@@ -741,6 +740,27 @@ void CFrame::StartGame(const std::string& filename)
     wxTheApp->Bind(wxEVT_MIDDLE_UP, &CFrame::OnMouse, this);
     wxTheApp->Bind(wxEVT_MOTION, &CFrame::OnMouse, this);
     m_render_parent->Bind(wxEVT_SIZE, &CFrame::OnRenderParentResize, this);
+  }
+}
+
+void CFrame::SetDebuggerStartupParameters() const
+{
+  SConfig& config = SConfig::GetInstance();
+
+  if (m_use_debugger)
+  {
+    const wxMenuBar* const menu_bar = GetMenuBar();
+
+    config.bBootToPause = menu_bar->IsChecked(IDM_BOOT_TO_PAUSE);
+    config.bAutomaticStart = menu_bar->IsChecked(IDM_AUTOMATIC_START);
+    config.bJITNoBlockCache = menu_bar->IsChecked(IDM_JIT_NO_BLOCK_CACHE);
+    config.bJITNoBlockLinking = menu_bar->IsChecked(IDM_JIT_NO_BLOCK_LINKING);
+    config.bEnableDebugging = true;
+  }
+  else
+  {
+    config.bBootToPause = false;
+    config.bEnableDebugging = false;
   }
 }
 
@@ -790,7 +810,6 @@ void CFrame::DoStop()
   // don't let this function run again until it finishes, or is aborted.
   m_confirm_stop = true;
 
-  m_is_game_loading = false;
   if (Core::GetState() != Core::State::Uninitialized || m_render_parent != nullptr)
   {
 #if defined __WXGTK__
@@ -891,6 +910,7 @@ bool CFrame::TriggerSTMPowerEvent()
 void CFrame::OnStopped()
 {
   m_confirm_stop = false;
+  m_is_game_loading = false;
   m_tried_graceful_shutdown = false;
 
   UninhibitScreensaver();
@@ -1147,6 +1167,21 @@ void CFrame::OnMemcard(wxCommandEvent& WXUNUSED(event))
   HotkeyManagerEmu::Enable(true);
 }
 
+void CFrame::OnLoadGameCubeIPLJAP(wxCommandEvent&)
+{
+  StartGame("", SConfig::BOOT_BS2_JAP);
+}
+
+void CFrame::OnLoadGameCubeIPLUSA(wxCommandEvent&)
+{
+  StartGame("", SConfig::BOOT_BS2_USA);
+}
+
+void CFrame::OnLoadGameCubeIPLEUR(wxCommandEvent&)
+{
+  StartGame("", SConfig::BOOT_BS2_EUR);
+}
+
 void CFrame::OnExportAllSaves(wxCommandEvent& WXUNUSED(event))
 {
   CWiiSaveCrypted::ExportAllSaves();
@@ -1208,11 +1243,8 @@ void CFrame::OnInstallWAD(wxCommandEvent& event)
                           wxPD_APP_MODAL | wxPD_ELAPSED_TIME | wxPD_ESTIMATED_TIME |
                               wxPD_REMAINING_TIME | wxPD_SMOOTH);
 
-  u64 titleID = DiscIO::CNANDContentManager::Access().Install_WiiWAD(fileName);
-  if (titleID == TITLEID_SYSMENU)
-  {
+  if (WiiUtils::InstallWAD(fileName))
     UpdateLoadWiiMenuItem();
-  }
 }
 
 void CFrame::OnUninstallWAD(wxCommandEvent&)
@@ -1227,10 +1259,9 @@ void CFrame::OnUninstallWAD(wxCommandEvent&)
     return;
   }
 
-  const auto volume = DiscIO::CreateVolumeFromFilename(file->GetFileName());
-  u64 title_id;
-  volume->GetTitleID(&title_id);
-  if (!DiscIO::CNANDContentManager::Access().RemoveTitle(title_id, Common::FROM_CONFIGURED_ROOT))
+  u64 title_id = file->GetTitleID();
+  IOS::HLE::Kernel ios;
+  if (ios.GetES()->DeleteTitleContent(title_id) < 0)
   {
     PanicAlertT("Failed to remove this title from the NAND.");
     return;
@@ -1258,11 +1289,7 @@ void CFrame::OnImportBootMiiBackup(wxCommandEvent& WXUNUSED(event))
 
   wxProgressDialog dialog(_("Importing NAND backup"), _("Working..."), 100, this,
                           wxPD_APP_MODAL | wxPD_ELAPSED_TIME | wxPD_SMOOTH);
-  DiscIO::NANDImporter().ImportNANDBin(file_name,
-                                       [&dialog](size_t current_entry, size_t total_entries) {
-                                         dialog.SetRange(total_entries);
-                                         dialog.Update(current_entry);
-                                       });
+  DiscIO::NANDImporter().ImportNANDBin(file_name, [&dialog] { dialog.Pulse(); });
   UpdateLoadWiiMenuItem();
 }
 
@@ -1329,12 +1356,6 @@ void CFrame::OnConnectWiimote(wxCommandEvent& event)
 void CFrame::OnToggleFullscreen(wxCommandEvent& WXUNUSED(event))
 {
   DoFullscreen(!RendererIsFullscreen());
-}
-
-void CFrame::OnToggleDualCore(wxCommandEvent& WXUNUSED(event))
-{
-  SConfig::GetInstance().bCPUThread = !SConfig::GetInstance().bCPUThread;
-  SConfig::GetInstance().SaveSettings();
 }
 
 void CFrame::OnLoadStateFromFile(wxCommandEvent& WXUNUSED(event))
@@ -1467,6 +1488,15 @@ void CFrame::UpdateGUI()
   GetMenuBar()->FindItem(IDM_SAVE_STATE)->Enable(Initialized);
   // Misc
   GetMenuBar()->FindItem(IDM_CHANGE_DISC)->Enable(Initialized);
+  GetMenuBar()
+      ->FindItem(IDM_LOAD_GC_IPL_JAP)
+      ->Enable(!Initialized && File::Exists(SConfig::GetInstance().GetBootROMPath(JAP_DIR)));
+  GetMenuBar()
+      ->FindItem(IDM_LOAD_GC_IPL_USA)
+      ->Enable(!Initialized && File::Exists(SConfig::GetInstance().GetBootROMPath(USA_DIR)));
+  GetMenuBar()
+      ->FindItem(IDM_LOAD_GC_IPL_EUR)
+      ->Enable(!Initialized && File::Exists(SConfig::GetInstance().GetBootROMPath(EUR_DIR)));
   if (DiscIO::CNANDContentManager::Access()
           .GetNANDLoader(TITLEID_SYSMENU, Common::FROM_CONFIGURED_ROOT)
           .IsValid())
@@ -1506,15 +1536,6 @@ void CFrame::UpdateGUI()
     {
       // Prepare to load Default ISO, enable play button
       if (!SConfig::GetInstance().m_strDefaultISO.empty())
-      {
-        GetToolBar()->EnableTool(IDM_PLAY, true);
-        GetMenuBar()->FindItem(IDM_PLAY)->Enable();
-        GetMenuBar()->FindItem(IDM_RECORD)->Enable();
-        GetMenuBar()->FindItem(IDM_PLAY_RECORD)->Enable();
-      }
-      // Prepare to load last selected file, enable play button
-      else if (!SConfig::GetInstance().m_LastFilename.empty() &&
-               File::Exists(SConfig::GetInstance().m_LastFilename))
       {
         GetToolBar()->EnableTool(IDM_PLAY, true);
         GetMenuBar()->FindItem(IDM_PLAY)->Enable();

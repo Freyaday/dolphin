@@ -16,12 +16,13 @@
 #include "Common/Assert.h"
 #include "Common/ChunkFile.h"
 #include "Common/CommonTypes.h"
-#include "Common/Crypto/AES.h"
 #include "Common/FileUtil.h"
 #include "Common/Logging/Log.h"
 #include "Common/StringUtil.h"
 #include "Common/Swap.h"
-#include "Core/ec_wii.h"
+#include "Core/IOS/Device.h"
+#include "Core/IOS/IOS.h"
+#include "Core/IOS/IOSC.h"
 
 namespace IOS
 {
@@ -42,14 +43,23 @@ bool IsDiscTitle(u64 title_id)
 
 bool IsChannel(u64 title_id)
 {
+  if (title_id == TITLEID_SYSMENU)
+    return true;
+
   return IsTitleType(title_id, TitleType::Channel) ||
          IsTitleType(title_id, TitleType::SystemChannel) ||
-         IsTitleType(title_id, TitleType::GameWithChannel);
+         IsTitleType(title_id, TitleType::GameWithChannel) ||
+         IsTitleType(title_id, TitleType::HiddenChannel);
 }
 
 bool Content::IsShared() const
 {
   return (type & 0x8000) != 0;
+}
+
+bool IsValidTMDSize(size_t size)
+{
+  return size <= 0x49e4;
 }
 
 TMDReader::TMDReader(const std::vector<u8>& bytes) : m_bytes(bytes)
@@ -239,19 +249,7 @@ void TicketReader::SetBytes(std::vector<u8>&& bytes)
 
 bool TicketReader::IsValid() const
 {
-  // Too small for the signature type.
-  if (m_bytes.size() < sizeof(u32))
-    return false;
-
-  u32 ticket_offset = GetOffset();
-  if (ticket_offset == 0)
-    return false;
-
-  // Too small for the ticket itself.
-  if (m_bytes.size() < ticket_offset + sizeof(Ticket))
-    return false;
-
-  return true;
+  return !m_bytes.empty() && m_bytes.size() % sizeof(Ticket) == 0;
 }
 
 void TicketReader::DoState(PointerWrap& p)
@@ -259,23 +257,9 @@ void TicketReader::DoState(PointerWrap& p)
   p.Do(m_bytes);
 }
 
-u32 TicketReader::GetNumberOfTickets() const
+size_t TicketReader::GetNumberOfTickets() const
 {
-  return static_cast<u32>(m_bytes.size() / (GetOffset() + sizeof(Ticket)));
-}
-
-u32 TicketReader::GetOffset() const
-{
-  u32 signature_type = Common::swap32(m_bytes.data());
-  if (signature_type == 0x10000)  // RSA4096
-    return 576;
-  if (signature_type == 0x10001)  // RSA2048
-    return 320;
-  if (signature_type == 0x10002)  // ECDSA
-    return 128;
-
-  ERROR_LOG(COMMON, "Invalid ticket signature type: %08x", signature_type);
-  return 0;
+  return m_bytes.size() / sizeof(Ticket);
 }
 
 const std::vector<u8>& TicketReader::GetRawTicket() const
@@ -283,10 +267,22 @@ const std::vector<u8>& TicketReader::GetRawTicket() const
   return m_bytes;
 }
 
+std::vector<u8> TicketReader::GetRawTicket(u64 ticket_id_to_find) const
+{
+  for (size_t i = 0; i < GetNumberOfTickets(); ++i)
+  {
+    const auto ticket_begin = m_bytes.begin() + sizeof(IOS::ES::Ticket) * i;
+    const u64 ticket_id = Common::swap64(&*ticket_begin + offsetof(IOS::ES::Ticket, ticket_id));
+    if (ticket_id == ticket_id_to_find)
+      return std::vector<u8>(ticket_begin, ticket_begin + sizeof(IOS::ES::Ticket));
+  }
+  return {};
+}
+
 std::vector<u8> TicketReader::GetRawTicketView(u32 ticket_num) const
 {
   // A ticket view is composed of a version + part of a ticket starting from the ticket_id field.
-  const auto ticket_start = m_bytes.cbegin() + GetOffset() + sizeof(Ticket) * ticket_num;
+  const auto ticket_start = m_bytes.cbegin() + sizeof(Ticket) * ticket_num;
   const auto view_start = ticket_start + offsetof(Ticket, ticket_id);
 
   // Copy the ticket version to the buffer (a single byte extended to 4).
@@ -301,52 +297,101 @@ std::vector<u8> TicketReader::GetRawTicketView(u32 ticket_num) const
   return view;
 }
 
+std::string TicketReader::GetIssuer() const
+{
+  const char* bytes =
+      reinterpret_cast<const char*>(m_bytes.data() + offsetof(Ticket, signature_issuer));
+  return std::string(bytes, strnlen(bytes, sizeof(Ticket::signature_issuer)));
+}
+
 u32 TicketReader::GetDeviceId() const
 {
-  return Common::swap32(m_bytes.data() + GetOffset() + offsetof(Ticket, device_id));
+  return Common::swap32(m_bytes.data() + offsetof(Ticket, device_id));
 }
 
 u64 TicketReader::GetTitleId() const
 {
-  return Common::swap64(m_bytes.data() + GetOffset() + offsetof(Ticket, title_id));
+  return Common::swap64(m_bytes.data() + offsetof(Ticket, title_id));
 }
 
 std::vector<u8> TicketReader::GetTitleKey() const
 {
-  const u8 common_key[16] = {0xeb, 0xe4, 0x2a, 0x22, 0x5e, 0x85, 0x93, 0xe4,
-                             0x48, 0xd9, 0xc5, 0x45, 0x73, 0x81, 0xaa, 0xf7};
   u8 iv[16] = {};
-  std::copy_n(&m_bytes[GetOffset() + offsetof(Ticket, title_id)], sizeof(Ticket::title_id), iv);
-  return Common::AES::Decrypt(common_key, iv, &m_bytes[GetOffset() + offsetof(Ticket, title_key)],
-                              16);
+  std::copy_n(&m_bytes[offsetof(Ticket, title_id)], sizeof(Ticket::title_id), iv);
+
+  const u8 index = m_bytes.at(offsetof(Ticket, common_key_index));
+  auto common_key_handle =
+      index != 1 ? HLE::IOSC::HANDLE_COMMON_KEY : HLE::IOSC::HANDLE_NEW_COMMON_KEY;
+  if (index != 0 && index != 1)
+  {
+    WARN_LOG(IOS_ES, "Bad common key index for title %016" PRIx64 ": %u -- using common key 0",
+             GetTitleId(), index);
+  }
+
+  const bool is_rvt = (GetIssuer() == "Root-CA00000002-XS00000006");
+  const HLE::IOSC::ConsoleType console_type =
+      is_rvt ? HLE::IOSC::ConsoleType::RVT : HLE::IOSC::ConsoleType::Retail;
+
+  std::vector<u8> key(16);
+  HLE::IOSC iosc(console_type);
+  iosc.Decrypt(common_key_handle, iv, &m_bytes[offsetof(Ticket, title_key)], 16, key.data(),
+               HLE::PID_ES);
+  return key;
 }
 
-constexpr s32 IOSC_OK = 0;
+void TicketReader::DeleteTicket(u64 ticket_id_to_delete)
+{
+  std::vector<u8> new_ticket;
+  const size_t num_tickets = GetNumberOfTickets();
+  for (size_t i = 0; i < num_tickets; ++i)
+  {
+    const auto ticket_start = m_bytes.cbegin() + sizeof(Ticket) * i;
+    const u64 ticket_id = Common::swap64(&*ticket_start + offsetof(Ticket, ticket_id));
+    if (ticket_id != ticket_id_to_delete)
+      new_ticket.insert(new_ticket.end(), ticket_start, ticket_start + sizeof(Ticket));
+  }
+
+  m_bytes = std::move(new_ticket);
+}
 
 s32 TicketReader::Unpersonalise()
 {
-  const auto ticket_begin = m_bytes.begin() + GetOffset();
+  const auto ticket_begin = m_bytes.begin();
 
   // IOS uses IOSC to compute an AES key from the peer public key and the device's private ECC key,
   // which is used the decrypt the title key. The IV is the ticket ID (8 bytes), zero extended.
+  using namespace HLE;
+  IOSC iosc;
+  IOSC::Handle public_handle;
+  s32 ret = iosc.CreateObject(&public_handle, IOSC::TYPE_PUBLIC_KEY, IOSC::SUBTYPE_ECC233, PID_ES);
+  if (ret != IPC_SUCCESS)
+    return ret;
 
   const auto public_key_iter = ticket_begin + offsetof(Ticket, server_public_key);
-  EcWii::ECCKey public_key;
-  std::copy_n(public_key_iter, sizeof(Ticket::server_public_key), public_key.begin());
+  ret = iosc.ImportPublicKey(public_handle, &*public_key_iter, PID_ES);
+  if (ret != IPC_SUCCESS)
+    return ret;
 
-  const EcWii& ec = EcWii::GetInstance();
-  const std::array<u8, 16> shared_secret = ec.GetSharedSecret(public_key);
+  IOSC::Handle key_handle;
+  ret = iosc.CreateObject(&key_handle, IOSC::TYPE_SECRET_KEY, IOSC::SUBTYPE_AES128, PID_ES);
+  if (ret != IPC_SUCCESS)
+    return ret;
+
+  ret = iosc.ComputeSharedKey(key_handle, IOSC::HANDLE_CONSOLE_KEY, public_handle, PID_ES);
+  if (ret != IPC_SUCCESS)
+    return ret;
 
   std::array<u8, 16> iv{};
   std::copy_n(ticket_begin + offsetof(Ticket, ticket_id), sizeof(Ticket::ticket_id), iv.begin());
 
-  const std::vector<u8> key =
-      Common::AES::Decrypt(shared_secret.data(), iv.data(),
-                           &*ticket_begin + offsetof(Ticket, title_key), sizeof(Ticket::title_key));
-
+  std::array<u8, 16> key{};
+  ret = iosc.Decrypt(key_handle, iv.data(), &*ticket_begin + offsetof(Ticket, title_key),
+                     sizeof(Ticket::title_key), key.data(), PID_ES);
   // Finally, IOS copies the decrypted title key back to the ticket buffer.
-  std::copy(key.cbegin(), key.cend(), ticket_begin + offsetof(Ticket, title_key));
-  return IOSC_OK;
+  if (ret == IPC_SUCCESS)
+    std::copy(key.cbegin(), key.cend(), ticket_begin + offsetof(Ticket, title_key));
+
+  return ret;
 }
 
 struct SharedContentMap::Entry
@@ -374,12 +419,13 @@ SharedContentMap::SharedContentMap(Common::FromWhichRoot root) : m_root(root)
 
 SharedContentMap::~SharedContentMap() = default;
 
-std::string SharedContentMap::GetFilenameFromSHA1(const std::array<u8, 20>& sha1) const
+std::optional<std::string>
+SharedContentMap::GetFilenameFromSHA1(const std::array<u8, 20>& sha1) const
 {
   const auto it = std::find_if(m_entries.begin(), m_entries.end(),
                                [&sha1](const auto& entry) { return entry.sha1 == sha1; });
   if (it == m_entries.end())
-    return "unk";
+    return {};
 
   const std::string id_string(it->id.begin(), it->id.end());
   return Common::RootUserPath(m_root) + StringFromFormat("/shared1/%s.app", id_string.c_str());
@@ -397,9 +443,9 @@ std::vector<std::array<u8, 20>> SharedContentMap::GetHashes() const
 
 std::string SharedContentMap::AddSharedContent(const std::array<u8, 20>& sha1)
 {
-  std::string filename = GetFilenameFromSHA1(sha1);
-  if (filename != "unk")
-    return filename;
+  auto filename = GetFilenameFromSHA1(sha1);
+  if (filename)
+    return *filename;
 
   const std::string id = StringFromFormat("%08x", m_last_id);
   Entry entry;
@@ -407,14 +453,32 @@ std::string SharedContentMap::AddSharedContent(const std::array<u8, 20>& sha1)
   entry.sha1 = sha1;
   m_entries.push_back(entry);
 
-  File::CreateFullPath(m_file_path);
-
-  File::IOFile file(m_file_path, "ab");
-  file.WriteArray(&entry, 1);
-
+  WriteEntries();
   filename = Common::RootUserPath(m_root) + StringFromFormat("/shared1/%s.app", id.c_str());
   m_last_id++;
-  return filename;
+  return *filename;
+}
+
+bool SharedContentMap::DeleteSharedContent(const std::array<u8, 20>& sha1)
+{
+  m_entries.erase(std::remove_if(m_entries.begin(), m_entries.end(),
+                                 [&sha1](const auto& entry) { return entry.sha1 == sha1; }),
+                  m_entries.end());
+  return WriteEntries();
+}
+
+bool SharedContentMap::WriteEntries() const
+{
+  // Temporary files in ES are only 12 characters long (excluding /tmp/).
+  const std::string temp_path = Common::RootUserPath(m_root) + "/tmp/shared1/cont";
+  File::CreateFullPath(temp_path);
+
+  // Atomically write the new content map.
+  File::IOFile file(temp_path, "w+b");
+  if (!file.WriteArray(m_entries.data(), m_entries.size()))
+    return false;
+  File::CreateFullPath(m_file_path);
+  return File::RenameSync(temp_path, m_file_path);
 }
 
 static std::pair<u32, u64> ReadUidSysEntry(File::IOFile& file)

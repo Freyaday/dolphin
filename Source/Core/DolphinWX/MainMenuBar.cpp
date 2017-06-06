@@ -216,6 +216,16 @@ wxMenu* MainMenuBar::CreateToolsMenu() const
   tools_menu->Append(IDM_IMPORT_SAVE, _("Import Wii Save..."));
   tools_menu->Append(IDM_EXPORT_ALL_SAVE, _("Export All Wii Saves"));
   tools_menu->AppendSeparator();
+  auto* const gc_bios_menu = new wxMenu;
+  gc_bios_menu->Append(IDM_LOAD_GC_IPL_JAP, _("NTSC-J"),
+                       _("Load NTSC-J GameCube Main Menu from the JAP folder."));
+  gc_bios_menu->Append(IDM_LOAD_GC_IPL_USA, _("NTSC-U"),
+                       _("Load NTSC-U GameCube Main Menu from the USA folder."));
+  gc_bios_menu->Append(IDM_LOAD_GC_IPL_EUR, _("PAL"),
+                       _("Load PAL GameCube Main Menu from the EUR folder."));
+  tools_menu->AppendSubMenu(gc_bios_menu, _("Load GameCube Main Menu"),
+                            _("Load a GameCube Main Menu located under Dolphin's GC folder."));
+  tools_menu->AppendSeparator();
   tools_menu->Append(IDM_CHEATS, _("&Cheat Manager"));
   tools_menu->Append(IDM_NETPLAY, _("Start &NetPlay..."));
   tools_menu->Append(IDM_FIFOPLAYER, _("FIFO Player"));
@@ -560,8 +570,11 @@ void MainMenuBar::RefreshWiiToolsLabels() const
   // For similar reasons, it should not be possible to export or import saves, because this can
   // result in the emulated software being confused, or even worse, exported saves having
   // inconsistent data.
-  for (const int index : {IDM_MENU_INSTALL_WAD, IDM_EXPORT_ALL_SAVE, IDM_IMPORT_SAVE})
+  for (const int index : {IDM_MENU_INSTALL_WAD, IDM_EXPORT_ALL_SAVE, IDM_IMPORT_SAVE,
+                          IDM_IMPORT_NAND, IDM_EXTRACT_CERTIFICATES})
+  {
     FindItem(index)->Enable(!Core::IsRunning() || !SConfig::GetInstance().bWii);
+  }
 }
 
 void MainMenuBar::RefreshWiiSystemMenuLabel() const

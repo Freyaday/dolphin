@@ -23,6 +23,7 @@
 #include "Common/MsgHandler.h"
 #include "Common/StringUtil.h"
 
+#include "Core/Config/GraphicsSettings.h"
 #include "Core/Core.h"
 
 #include "VideoBackends/OGL/BoundingBox.h"
@@ -83,6 +84,11 @@ static void APIENTRY ErrorCallback(GLenum source, GLenum type, GLuint id, GLenum
 {
   const char* s_source;
   const char* s_type;
+
+  // Performance - DualCore driver performance warning:
+  // DualCore application thread syncing with server thread
+  if (id == 0x200b0)
+    return;
 
   switch (source)
   {
@@ -513,7 +519,7 @@ Renderer::Renderer()
       {
         // GLES 3.1 can't support stereo rendering and MSAA
         OSD::AddMessage("MSAA Stereo rendering isn't supported by your GPU.", 10000);
-        g_ActiveConfig.iMultisamples = 1;
+        Config::SetCurrent(Config::GFX_MSAA, 1);
       }
     }
     else

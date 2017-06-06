@@ -1,5 +1,5 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
-<Project DefaultTargets="Build" ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|x64">
       <Configuration>Debug</Configuration>
@@ -12,11 +12,12 @@
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{E54CF649-140E-4255-81A5-30A673C1FB36}</ProjectGuid>
+    <WindowsTargetPlatformVersion>10.0.15063.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>v141</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)'=='Debug'" Label="Configuration">
@@ -34,6 +35,16 @@
     <Import Project="..\..\VSProps\PCHUse.props" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <ObjectFileName>$(IntDir)/%(RelativeDir)/</ObjectFileName>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <ObjectFileName>$(IntDir)/%(RelativeDir)/</ObjectFileName>
+    </ClCompile>
+  </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="ActionReplay.cpp" />
     <ClCompile Include="Analytics.cpp" />
@@ -45,6 +56,13 @@
     <ClCompile Include="Boot\Boot_ELF.cpp" />
     <ClCompile Include="Boot\Boot_WiiWAD.cpp" />
     <ClCompile Include="Boot\ElfReader.cpp" />
+    <ClCompile Include="Config\Config.cpp" />
+    <ClCompile Include="Config\GraphicsSettings.cpp" />
+    <ClCompile Include="ConfigLoaders\BaseConfigLoader.cpp" />
+    <ClCompile Include="ConfigLoaders\GameConfigLoader.cpp" />
+    <ClCompile Include="ConfigLoaders\IsSettingSaveable.cpp" />
+    <ClCompile Include="ConfigLoaders\MovieConfigLoader.cpp" />
+    <ClCompile Include="ConfigLoaders\NetPlayConfigLoader.cpp" />
     <ClCompile Include="ConfigManager.cpp" />
     <ClCompile Include="Core.cpp" />
     <ClCompile Include="CoreTiming.cpp" />
@@ -95,6 +113,7 @@
     <ClCompile Include="HLE\HLE.cpp" />
     <ClCompile Include="HLE\HLE_Misc.cpp" />
     <ClCompile Include="HLE\HLE_OS.cpp" />
+    <ClCompile Include="HLE\HLE_VarArgs.cpp" />
     <ClCompile Include="HotkeyManager.cpp" />
     <ClCompile Include="HW\AudioInterface.cpp" />
     <ClCompile Include="HW\CPU.cpp" />
@@ -113,7 +132,6 @@
     <ClCompile Include="HW\DSPLLE\DSPHost.cpp" />
     <ClCompile Include="HW\DSPLLE\DSPLLE.cpp" />
     <ClCompile Include="HW\DSPLLE\DSPLLEGlobals.cpp" />
-    <ClCompile Include="HW\DSPLLE\DSPLLETools.cpp" />
     <ClCompile Include="HW\DSPLLE\DSPSymbols.cpp" />
     <ClCompile Include="HW\DVD\DVDInterface.cpp" />
     <ClCompile Include="HW\DVD\DVDMath.cpp" />
@@ -175,6 +193,7 @@
     <ClCompile Include="IOS\Device.cpp" />
     <ClCompile Include="IOS\DeviceStub.cpp" />
     <ClCompile Include="IOS\IOS.cpp" />
+    <ClCompile Include="IOS\IOSC.cpp" />
     <ClCompile Include="IOS\MemoryValues.cpp" />
     <ClCompile Include="IOS\MIOS.cpp" />
     <ClCompile Include="IOS\DI\DI.cpp" />
@@ -230,10 +249,6 @@
     <ClCompile Include="Movie.cpp" />
     <ClCompile Include="NetPlayClient.cpp" />
     <ClCompile Include="NetPlayServer.cpp" />
-    <ClCompile Include="ConfigLoaders\BaseConfigLoader.cpp" />
-    <ClCompile Include="ConfigLoaders\GameConfigLoader.cpp" />
-    <ClCompile Include="ConfigLoaders\MovieConfigLoader.cpp" />
-    <ClCompile Include="ConfigLoaders\NetPlayConfigLoader.cpp" />
     <ClCompile Include="PatchEngine.cpp" />
     <ClCompile Include="PowerPC\BreakPoints.cpp" />
     <ClCompile Include="PowerPC\CachedInterpreter\CachedInterpreter.cpp" />
@@ -248,18 +263,6 @@
     <ClCompile Include="PowerPC\Interpreter\Interpreter_SystemRegisters.cpp" />
     <ClCompile Include="PowerPC\Interpreter\Interpreter_Tables.cpp" />
     <ClCompile Include="PowerPC\Jit64Common\ConstantPool.cpp" />
-    <ClCompile Include="PowerPC\JitILCommon\IR.cpp" />
-    <ClCompile Include="PowerPC\JitILCommon\JitILBase_Branch.cpp" />
-    <ClCompile Include="PowerPC\JitILCommon\JitILBase_FloatingPoint.cpp" />
-    <ClCompile Include="PowerPC\JitILCommon\JitILBase_Integer.cpp" />
-    <ClCompile Include="PowerPC\JitILCommon\JitILBase_LoadStore.cpp" />
-    <ClCompile Include="PowerPC\JitILCommon\JitILBase_LoadStoreFloating.cpp" />
-    <ClCompile Include="PowerPC\JitILCommon\JitILBase_LoadStorePaired.cpp" />
-    <ClCompile Include="PowerPC\JitILCommon\JitILBase_Paired.cpp" />
-    <ClCompile Include="PowerPC\JitILCommon\JitILBase_SystemRegisters.cpp" />
-    <ClCompile Include="PowerPC\Jit64IL\IR_X86.cpp" />
-    <ClCompile Include="PowerPC\Jit64IL\JitIL.cpp" />
-    <ClCompile Include="PowerPC\Jit64IL\JitIL_Tables.cpp" />
     <ClCompile Include="PowerPC\Jit64\FPURegCache.cpp" />
     <ClCompile Include="PowerPC\Jit64\GPRRegCache.cpp" />
     <ClCompile Include="PowerPC\Jit64\Jit.cpp" />
@@ -296,6 +299,7 @@
     <ClCompile Include="PowerPC\PPCTables.cpp" />
     <ClCompile Include="PowerPC\Profiler.cpp" />
     <ClCompile Include="State.cpp" />
+    <ClCompile Include="TitleDatabase.cpp" />
     <ClCompile Include="WiiRoot.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -307,6 +311,13 @@
     <ClInclude Include="Boot\Boot_DOL.h" />
     <ClInclude Include="Boot\ElfReader.h" />
     <ClInclude Include="Boot\ElfTypes.h" />
+    <ClInclude Include="Config\Config.h" />
+    <ClInclude Include="Config\GraphicsSettings.h" />
+    <ClInclude Include="ConfigLoaders\BaseConfigLoader.h" />
+    <ClInclude Include="ConfigLoaders\GameConfigLoader.h" />
+    <ClInclude Include="ConfigLoaders\IsSettingSaveable.h" />
+    <ClInclude Include="ConfigLoaders\MovieConfigLoader.h" />
+    <ClInclude Include="ConfigLoaders\NetPlayConfigLoader.h" />
     <ClInclude Include="ConfigManager.h" />
     <ClInclude Include="Core.h" />
     <ClInclude Include="CoreTiming.h" />
@@ -349,6 +360,7 @@
     <ClInclude Include="HLE\HLE.h" />
     <ClInclude Include="HLE\HLE_Misc.h" />
     <ClInclude Include="HLE\HLE_OS.h" />
+    <ClInclude Include="HLE\HLE_VarArgs.h" />
     <ClInclude Include="Host.h" />
     <ClInclude Include="HotkeyManager.h" />
     <ClInclude Include="HW\AudioInterface.h" />
@@ -369,7 +381,6 @@
     <ClInclude Include="HW\DSPLLE\DSPDebugInterface.h" />
     <ClInclude Include="HW\DSPLLE\DSPLLE.h" />
     <ClInclude Include="HW\DSPLLE\DSPLLEGlobals.h" />
-    <ClInclude Include="HW\DSPLLE\DSPLLETools.h" />
     <ClInclude Include="HW\DSPLLE\DSPSymbols.h" />
     <ClInclude Include="HW\DVD\DVDInterface.h" />
     <ClInclude Include="HW\DVD\DVDMath.h" />
@@ -432,6 +443,7 @@
     <ClInclude Include="IOS\Device.h" />
     <ClInclude Include="IOS\DeviceStub.h" />
     <ClInclude Include="IOS\IOS.h" />
+    <ClInclude Include="IOS\IOSC.h" />
     <ClInclude Include="IOS\MemoryValues.h" />
     <ClInclude Include="IOS\MIOS.h" />
     <ClInclude Include="IOS\DI\DI.h" />
@@ -481,10 +493,6 @@
     <ClInclude Include="NetPlayClient.h" />
     <ClInclude Include="NetPlayProto.h" />
     <ClInclude Include="NetPlayServer.h" />
-    <ClInclude Include="ConfigLoaders\BaseConfigLoader.h" />
-    <ClInclude Include="ConfigLoaders\GameConfigLoader.h" />
-    <ClInclude Include="ConfigLoaders\MovieConfigLoader.h" />
-    <ClInclude Include="ConfigLoaders\NetPlayConfigLoader.h" />
     <ClInclude Include="PatchEngine.h" />
     <ClInclude Include="PowerPC\BreakPoints.h" />
     <ClInclude Include="PowerPC\CPUCoreBase.h" />
@@ -494,14 +502,11 @@
     <ClInclude Include="PowerPC\Interpreter\Interpreter.h" />
     <ClInclude Include="PowerPC\Interpreter\Interpreter_FPUtils.h" />
     <ClInclude Include="PowerPC\Jit64Common\ConstantPool.h" />
-    <ClInclude Include="PowerPC\Jit64IL\JitIL.h" />
     <ClInclude Include="PowerPC\Jit64\FPURegCache.h" />
     <ClInclude Include="PowerPC\Jit64\GPRRegCache.h" />
     <ClInclude Include="PowerPC\Jit64\Jit.h" />
     <ClInclude Include="PowerPC\Jit64\JitAsm.h" />
     <ClInclude Include="PowerPC\Jit64\JitRegCache.h" />
-    <ClInclude Include="PowerPC\JitILCommon\IR.h" />
-    <ClInclude Include="PowerPC\JitILCommon\JitILBase.h" />
     <ClInclude Include="PowerPC\Jit64Common\BlockCache.h" />
     <ClInclude Include="PowerPC\Jit64Common\EmuCodeBlock.h" />
     <ClInclude Include="PowerPC\Jit64Common\FarCodeCache.h" />
@@ -525,6 +530,7 @@
     <ClInclude Include="PowerPC\PPCTables.h" />
     <ClInclude Include="PowerPC\Profiler.h" />
     <ClInclude Include="State.h" />
+    <ClInclude Include="TitleDatabase.h" />
     <ClInclude Include="WiiRoot.h" />
   </ItemGroup>
   <ItemGroup>
@@ -549,9 +555,6 @@
     <ProjectReference Include="$(ExternalsDir)mbedtls\mbedTLS.vcxproj">
       <Project>{bdb6578b-0691-4e80-a46c-df21639fd3b8}</Project>
     </ProjectReference>
-    <ProjectReference Include="$(ExternalsDir)portaudio\build\portaudio.vcxproj">
-      <Project>{0a18a071-125e-442f-aff7-a3f68abecf99}</Project>
-    </ProjectReference>
     <ProjectReference Include="$(ExternalsDir)SFML\build\vc2010\SFML_Network.vcxproj">
       <Project>{93d73454-2512-424e-9cda-4bb357fe13dd}</Project>
     </ProjectReference>
@@ -572,6 +575,9 @@
     </ProjectReference>
     <ProjectReference Include="$(CoreDir)VideoCommon\VideoCommon.vcxproj">
       <Project>{3de9ee35-3e91-4f27-a014-2866ad8c3fe3}</Project>
+    </ProjectReference>
+    <ProjectReference Include="..\..\..\Externals\cubeb\msvc\cubeb.vcxproj">
+      <Project>{8ea11166-6512-44fc-b7a5-a4d1ecc81170}</Project>
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

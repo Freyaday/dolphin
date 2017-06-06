@@ -4,12 +4,14 @@
 
 #include "DiscIO/VolumeWiiCrypted.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstring>
 #include <map>
 #include <mbedtls/aes.h>
 #include <mbedtls/sha1.h>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -24,62 +26,126 @@
 #include "DiscIO/Enums.h"
 #include "DiscIO/Filesystem.h"
 #include "DiscIO/Volume.h"
-#include "DiscIO/VolumeCreator.h"
 
 namespace DiscIO
 {
-CVolumeWiiCrypted::CVolumeWiiCrypted(std::unique_ptr<IBlobReader> reader, u64 _VolumeOffset,
-                                     const unsigned char* _pVolumeKey)
-    : m_pReader(std::move(reader)), m_AES_ctx(std::make_unique<mbedtls_aes_context>()),
-      m_VolumeOffset(_VolumeOffset), m_dataOffset(0x20000), m_LastDecryptedBlockOffset(-1)
+constexpr u64 PARTITION_DATA_OFFSET = 0x20000;
+
+CVolumeWiiCrypted::CVolumeWiiCrypted(std::unique_ptr<IBlobReader> reader)
+    : m_pReader(std::move(reader)), m_game_partition(PARTITION_NONE), m_last_decrypted_block(-1)
 {
   _assert_(m_pReader);
 
-  mbedtls_aes_setkey_dec(m_AES_ctx.get(), _pVolumeKey, 128);
-}
+  // Get tickets, TMDs, and decryption keys for all partitions
+  for (u32 partition_group = 0; partition_group < 4; ++partition_group)
+  {
+    const std::optional<u32> number_of_partitions =
+        m_pReader->ReadSwapped<u32>(0x40000 + (partition_group * 8));
+    if (!number_of_partitions)
+      continue;
 
-bool CVolumeWiiCrypted::ChangePartition(u64 offset)
-{
-  m_VolumeOffset = offset;
-  m_LastDecryptedBlockOffset = -1;
+    std::optional<u32> read_buffer = m_pReader->ReadSwapped<u32>(0x40000 + (partition_group * 8) + 4);
+    if (!read_buffer)
+      continue;
+    const u64 partition_table_offset = static_cast<u64>(*read_buffer) << 2;
 
-  u8 volume_key[16];
-  DiscIO::VolumeKeyForPartition(*m_pReader, offset, volume_key);
-  mbedtls_aes_setkey_dec(m_AES_ctx.get(), volume_key, 128);
-  return true;
+    for (u32 i = 0; i < number_of_partitions; i++)
+    {
+      // Read the partition offset
+      read_buffer = m_pReader->ReadSwapped<u32>(partition_table_offset + (i * 8));
+      if (!read_buffer)
+        continue;
+      const u64 partition_offset = static_cast<u64>(*read_buffer) << 2;
+
+      // Set m_game_partition if this is the game partition
+      if (m_game_partition == PARTITION_NONE)
+      {
+        const std::optional<u32> partition_type =
+            m_pReader->ReadSwapped<u32>(partition_table_offset + (i * 8) + 4);
+        if (partition_type == u32(0))
+          m_game_partition = Partition(partition_offset);
+      }
+
+      // Read ticket
+      std::vector<u8> ticket_buffer(sizeof(IOS::ES::Ticket));
+      if (!m_pReader->Read(partition_offset, ticket_buffer.size(), ticket_buffer.data()))
+        continue;
+      IOS::ES::TicketReader ticket{std::move(ticket_buffer)};
+      if (!ticket.IsValid())
+        continue;
+
+      // Read TMD
+      const std::optional<u32> tmd_size = m_pReader->ReadSwapped<u32>(partition_offset + 0x2a4);
+      std::optional<u32> tmd_address = m_pReader->ReadSwapped<u32>(partition_offset + 0x2a8);
+      if (!tmd_size || !tmd_address)
+        continue;
+      *tmd_address <<= 2;
+      if (!IOS::ES::IsValidTMDSize(*tmd_size))
+      {
+        // This check is normally done by ES in ES_DiVerify, but that would happen too late
+        // (after allocating the buffer), so we do the check here.
+        PanicAlert("Invalid TMD size");
+        continue;
+      }
+      std::vector<u8> tmd_buffer(*tmd_size);
+      if (!m_pReader->Read(partition_offset + *tmd_address, *tmd_size, tmd_buffer.data()))
+        continue;
+      IOS::ES::TMDReader tmd{std::move(tmd_buffer)};
+
+      // Get the decryption key
+      const std::vector<u8> key = ticket.GetTitleKey();
+      if (key.size() != 16)
+        continue;
+      std::unique_ptr<mbedtls_aes_context> aes_context = std::make_unique<mbedtls_aes_context>();
+      mbedtls_aes_setkey_dec(aes_context.get(), key.data(), 128);
+
+      // We've read everything. Time to store it! (The reason we don't store anything
+      // earlier is because we want to be able to skip adding the partition if an error occurs.)
+      const Partition partition(partition_offset);
+      m_partition_keys[partition] = std::move(aes_context);
+      m_partition_tickets[partition] = std::move(ticket);
+      m_partition_tmds[partition] = std::move(tmd);
+    }
+  }
 }
 
 CVolumeWiiCrypted::~CVolumeWiiCrypted()
 {
 }
 
-bool CVolumeWiiCrypted::Read(u64 _ReadOffset, u64 _Length, u8* _pBuffer, bool decrypt) const
+bool CVolumeWiiCrypted::Read(u64 _ReadOffset, u64 _Length, u8* _pBuffer,
+                             const Partition& partition) const
 {
-  if (!decrypt)
+  if (partition == PARTITION_NONE)
     return m_pReader->Read(_ReadOffset, _Length, _pBuffer);
+
+  // Get the decryption key for the partition
+  auto it = m_partition_keys.find(partition);
+  if (it == m_partition_keys.end())
+    return false;
+  mbedtls_aes_context* aes_context = it->second.get();
 
   std::vector<u8> read_buffer(BLOCK_TOTAL_SIZE);
   while (_Length > 0)
   {
-    // Calculate block offset
-    u64 Block = _ReadOffset / BLOCK_DATA_SIZE;
-    u64 Offset = _ReadOffset % BLOCK_DATA_SIZE;
+    // Calculate offsets
+    u64 block_offset_on_disc =
+        partition.offset + PARTITION_DATA_OFFSET + _ReadOffset / BLOCK_DATA_SIZE * BLOCK_TOTAL_SIZE;
+    u64 data_offset_in_block = _ReadOffset % BLOCK_DATA_SIZE;
 
-    if (m_LastDecryptedBlockOffset != Block)
+    if (m_last_decrypted_block != block_offset_on_disc)
     {
       // Read the current block
-      if (!m_pReader->Read(m_VolumeOffset + m_dataOffset + Block * BLOCK_TOTAL_SIZE,
-                           BLOCK_TOTAL_SIZE, read_buffer.data()))
+      if (!m_pReader->Read(block_offset_on_disc, BLOCK_TOTAL_SIZE, read_buffer.data()))
         return false;
 
       // Decrypt the block's data.
-      // 0x3D0 - 0x3DF in m_pBuffer will be overwritten,
+      // 0x3D0 - 0x3DF in read_buffer will be overwritten,
       // but that won't affect anything, because we won't
-      // use the content of m_pBuffer anymore after this
-      mbedtls_aes_crypt_cbc(m_AES_ctx.get(), MBEDTLS_AES_DECRYPT, BLOCK_DATA_SIZE,
-                            &read_buffer[0x3D0], &read_buffer[BLOCK_HEADER_SIZE],
-                            m_LastDecryptedBlock);
-      m_LastDecryptedBlockOffset = Block;
+      // use the content of read_buffer anymore after this
+      mbedtls_aes_crypt_cbc(aes_context, MBEDTLS_AES_DECRYPT, BLOCK_DATA_SIZE, &read_buffer[0x3D0],
+                            &read_buffer[BLOCK_HEADER_SIZE], m_last_decrypted_block_data);
+      m_last_decrypted_block = block_offset_on_disc;
 
       // The only thing we currently use from the 0x000 - 0x3FF part
       // of the block is the IV (at 0x3D0), but it also contains SHA-1
@@ -88,70 +154,66 @@ bool CVolumeWiiCrypted::Read(u64 _ReadOffset, u64 _Length, u8* _pBuffer, bool de
     }
 
     // Copy the decrypted data
-    u64 MaxSizeToCopy = BLOCK_DATA_SIZE - Offset;
-    u64 CopySize = (_Length > MaxSizeToCopy) ? MaxSizeToCopy : _Length;
-    memcpy(_pBuffer, &m_LastDecryptedBlock[Offset], (size_t)CopySize);
+    u64 copy_size = std::min(_Length, BLOCK_DATA_SIZE - data_offset_in_block);
+    memcpy(_pBuffer, &m_last_decrypted_block_data[data_offset_in_block],
+           static_cast<size_t>(copy_size));
 
     // Update offsets
-    _Length -= CopySize;
-    _pBuffer += CopySize;
-    _ReadOffset += CopySize;
+    _Length -= copy_size;
+    _pBuffer += copy_size;
+    _ReadOffset += copy_size;
   }
 
   return true;
 }
 
-bool CVolumeWiiCrypted::GetTitleID(u64* buffer) const
+std::vector<Partition> CVolumeWiiCrypted::GetPartitions() const
 {
-  return ReadSwapped(m_VolumeOffset + 0x1DC, buffer, false);
+  std::vector<Partition> partitions;
+  for (const auto& pair : m_partition_keys)
+    partitions.push_back(pair.first);
+  return partitions;
 }
 
-IOS::ES::TicketReader CVolumeWiiCrypted::GetTicket() const
+Partition CVolumeWiiCrypted::GetGamePartition() const
 {
-  std::vector<u8> buffer(0x2a4);
-  Read(m_VolumeOffset, buffer.size(), buffer.data(), false);
-  return IOS::ES::TicketReader{std::move(buffer)};
+  return m_game_partition;
 }
 
-IOS::ES::TMDReader CVolumeWiiCrypted::GetTMD() const
+std::optional<u64> CVolumeWiiCrypted::GetTitleID(const Partition& partition) const
 {
-  u32 tmd_size = 0;
-  u32 tmd_address = 0;
-
-  if (!ReadSwapped(m_VolumeOffset + 0x2a4, &tmd_size, false))
+  const IOS::ES::TicketReader& ticket = GetTicket(partition);
+  if (!ticket.IsValid())
     return {};
-  if (!ReadSwapped(m_VolumeOffset + 0x2a8, &tmd_address, false))
-    return {};
-  tmd_address <<= 2;
-
-  if (tmd_size > 1024 * 1024 * 4)
-  {
-    // The size is checked so that a malicious or corrupt ISO
-    // can't force Dolphin to allocate up to 4 GiB of memory.
-    // 4 MiB should be much bigger than the size of TMDs and much smaller
-    // than the amount of RAM in a computer that can run Dolphin.
-    PanicAlert("TMD > 4 MiB");
-    tmd_size = 1024 * 1024 * 4;
-  }
-
-  std::vector<u8> buffer(tmd_size);
-  if (!Read(m_VolumeOffset + tmd_address, tmd_size, buffer.data(), false))
-    return {};
-
-  return IOS::ES::TMDReader{std::move(buffer)};
+  return ticket.GetTitleId();
 }
 
-u64 CVolumeWiiCrypted::PartitionOffsetToRawOffset(u64 offset) const
+const IOS::ES::TicketReader& CVolumeWiiCrypted::GetTicket(const Partition& partition) const
 {
-  return m_VolumeOffset + m_dataOffset + (offset / BLOCK_DATA_SIZE * BLOCK_TOTAL_SIZE) +
+  auto it = m_partition_tickets.find(partition);
+  return it != m_partition_tickets.end() ? it->second : INVALID_TICKET;
+}
+
+const IOS::ES::TMDReader& CVolumeWiiCrypted::GetTMD(const Partition& partition) const
+{
+  auto it = m_partition_tmds.find(partition);
+  return it != m_partition_tmds.end() ? it->second : INVALID_TMD;
+}
+
+u64 CVolumeWiiCrypted::PartitionOffsetToRawOffset(u64 offset, const Partition& partition)
+{
+  if (partition == PARTITION_NONE)
+    return offset;
+
+  return partition.offset + PARTITION_DATA_OFFSET + (offset / BLOCK_DATA_SIZE * BLOCK_TOTAL_SIZE) +
          (offset % BLOCK_DATA_SIZE);
 }
 
-std::string CVolumeWiiCrypted::GetGameID() const
+std::string CVolumeWiiCrypted::GetGameID(const Partition& partition) const
 {
   char ID[6];
 
-  if (!Read(0, 6, (u8*)ID, true))
+  if (!Read(0, 6, (u8*)ID, partition))
     return std::string();
 
   return DecodeString(ID);
@@ -159,19 +221,14 @@ std::string CVolumeWiiCrypted::GetGameID() const
 
 Region CVolumeWiiCrypted::GetRegion() const
 {
-  u32 region_code;
-  if (!ReadSwapped(0x4E000, &region_code, false))
-    return Region::UNKNOWN_REGION;
-
-  return static_cast<Region>(region_code);
+  const std::optional<u32> region_code = m_pReader->ReadSwapped<u32>(0x4E000);
+  return region_code ? static_cast<Region>(*region_code) : Region::UNKNOWN_REGION;
 }
 
-Country CVolumeWiiCrypted::GetCountry() const
+Country CVolumeWiiCrypted::GetCountry(const Partition& partition) const
 {
-  u8 country_byte;
-  if (!ReadSwapped(3, &country_byte, true))
-    return Country::COUNTRY_UNKNOWN;
-
+  // The 0 that we use as a default value is mapped to COUNTRY_UNKNOWN and UNKNOWN_REGION
+  u8 country_byte = ReadSwapped<u8>(3, partition).value_or(0);
   const Region region = GetRegion();
 
   if (RegionSwitchWii(country_byte) != region)
@@ -180,29 +237,26 @@ Country CVolumeWiiCrypted::GetCountry() const
   return CountrySwitch(country_byte);
 }
 
-std::string CVolumeWiiCrypted::GetMakerID() const
+std::string CVolumeWiiCrypted::GetMakerID(const Partition& partition) const
 {
   char makerID[2];
 
-  if (!Read(0x4, 0x2, (u8*)&makerID, true))
+  if (!Read(0x4, 0x2, (u8*)&makerID, partition))
     return std::string();
 
   return DecodeString(makerID);
 }
 
-u16 CVolumeWiiCrypted::GetRevision() const
+std::optional<u16> CVolumeWiiCrypted::GetRevision(const Partition& partition) const
 {
-  u8 revision;
-  if (!ReadSwapped(7, &revision, true))
-    return 0;
-
-  return revision;
+  std::optional<u8> revision = ReadSwapped<u8>(7, partition);
+  return revision ? *revision : std::optional<u16>();
 }
 
-std::string CVolumeWiiCrypted::GetInternalName() const
+std::string CVolumeWiiCrypted::GetInternalName(const Partition& partition) const
 {
   char name_buffer[0x60];
-  if (Read(0x20, 0x60, (u8*)&name_buffer, true))
+  if (Read(0x20, 0x60, (u8*)&name_buffer, partition))
     return DecodeString(name_buffer);
 
   return "";
@@ -210,7 +264,10 @@ std::string CVolumeWiiCrypted::GetInternalName() const
 
 std::map<Language, std::string> CVolumeWiiCrypted::GetLongNames() const
 {
-  std::unique_ptr<IFileSystem> file_system(CreateFileSystem(this));
+  std::unique_ptr<IFileSystem> file_system(CreateFileSystem(this, GetGamePartition()));
+  if (!file_system)
+    return {};
+
   std::vector<u8> opening_bnr(NAMES_TOTAL_BYTES);
   size_t size = file_system->ReadFile("opening.bnr", opening_bnr.data(), opening_bnr.size(), 0x5C);
   opening_bnr.resize(size);
@@ -222,28 +279,18 @@ std::vector<u32> CVolumeWiiCrypted::GetBanner(int* width, int* height) const
   *width = 0;
   *height = 0;
 
-  u64 title_id;
-  if (!GetTitleID(&title_id))
+  const std::optional<u64> title_id = GetTitleID(GetGamePartition());
+  if (!title_id)
     return std::vector<u32>();
 
-  return GetWiiBanner(width, height, title_id);
+  return GetWiiBanner(width, height, *title_id);
 }
 
-u64 CVolumeWiiCrypted::GetFSTSize() const
-{
-  u32 size;
-
-  if (!Read(0x428, 0x4, (u8*)&size, true))
-    return 0;
-
-  return (u64)Common::swap32(size) << 2;
-}
-
-std::string CVolumeWiiCrypted::GetApploaderDate() const
+std::string CVolumeWiiCrypted::GetApploaderDate(const Partition& partition) const
 {
   char date[16];
 
-  if (!Read(0x2440, 0x10, (u8*)&date, true))
+  if (!Read(0x2440, 0x10, (u8*)&date, partition))
     return std::string();
 
   return DecodeString(date);
@@ -254,11 +301,9 @@ Platform CVolumeWiiCrypted::GetVolumeType() const
   return Platform::WII_DISC;
 }
 
-u8 CVolumeWiiCrypted::GetDiscNumber() const
+std::optional<u8> CVolumeWiiCrypted::GetDiscNumber(const Partition& partition) const
 {
-  u8 disc_number = 0;
-  ReadSwapped(6, &disc_number, true);
-  return disc_number;
+  return ReadSwapped<u8>(6, partition);
 }
 
 BlobType CVolumeWiiCrypted::GetBlobType() const
@@ -276,29 +321,34 @@ u64 CVolumeWiiCrypted::GetRawSize() const
   return m_pReader->GetRawSize();
 }
 
-bool CVolumeWiiCrypted::CheckIntegrity() const
+bool CVolumeWiiCrypted::CheckIntegrity(const Partition& partition) const
 {
+  // Get the decryption key for the partition
+  auto it = m_partition_keys.find(partition);
+  if (it == m_partition_keys.end())
+    return false;
+  mbedtls_aes_context* aes_context = it->second.get();
+
   // Get partition data size
   u32 partSizeDiv4;
-  Read(m_VolumeOffset + 0x2BC, 4, (u8*)&partSizeDiv4, false);
+  m_pReader->Read(partition.offset + 0x2BC, 4, (u8*)&partSizeDiv4);
   u64 partDataSize = (u64)Common::swap32(partSizeDiv4) * 4;
 
   u32 nClusters = (u32)(partDataSize / 0x8000);
   for (u32 clusterID = 0; clusterID < nClusters; ++clusterID)
   {
-    u64 clusterOff = m_VolumeOffset + m_dataOffset + (u64)clusterID * 0x8000;
+    u64 clusterOff = partition.offset + PARTITION_DATA_OFFSET + (u64)clusterID * 0x8000;
 
     // Read and decrypt the cluster metadata
     u8 clusterMDCrypted[0x400];
     u8 clusterMD[0x400];
     u8 IV[16] = {0};
-    if (!Read(clusterOff, 0x400, clusterMDCrypted, false))
+    if (!m_pReader->Read(clusterOff, 0x400, clusterMDCrypted))
     {
       WARN_LOG(DISCIO, "Integrity Check: fail at cluster %d: could not read metadata", clusterID);
       return false;
     }
-    mbedtls_aes_crypt_cbc(m_AES_ctx.get(), MBEDTLS_AES_DECRYPT, 0x400, IV, clusterMDCrypted,
-                          clusterMD);
+    mbedtls_aes_crypt_cbc(aes_context, MBEDTLS_AES_DECRYPT, 0x400, IV, clusterMDCrypted, clusterMD);
 
     // Some clusters have invalid data and metadata because they aren't
     // meant to be read by the game (for example, holes between files). To
@@ -317,7 +367,7 @@ bool CVolumeWiiCrypted::CheckIntegrity() const
       continue;
 
     u8 clusterData[0x7C00];
-    if (!Read((u64)clusterID * 0x7C00, 0x7C00, clusterData, true))
+    if (!Read((u64)clusterID * 0x7C00, 0x7C00, clusterData, partition))
     {
       WARN_LOG(DISCIO, "Integrity Check: fail at cluster %d: could not read data", clusterID);
       return false;

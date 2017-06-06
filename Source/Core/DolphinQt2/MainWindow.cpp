@@ -7,40 +7,73 @@
 #include <QIcon>
 #include <QMessageBox>
 
+#include "Common/Common.h"
+
 #include "Core/BootManager.h"
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
+#include "Core/HW/GCKeyboard.h"
+#include "Core/HW/GCPad.h"
 #include "Core/HW/ProcessorInterface.h"
+#include "Core/HW/Wiimote.h"
+#include "Core/HW/WiimoteEmu/WiimoteEmu.h"
+#include "Core/HotkeyManager.h"
 #include "Core/Movie.h"
+#include "Core/NetPlayProto.h"
 #include "Core/State.h"
 
 #include "DolphinQt2/AboutDialog.h"
-#include "DolphinQt2/Config/PathDialog.h"
+#include "DolphinQt2/Config/ControllersWindow.h"
 #include "DolphinQt2/Config/SettingsWindow.h"
 #include "DolphinQt2/Host.h"
 #include "DolphinQt2/MainWindow.h"
 #include "DolphinQt2/Resources.h"
 #include "DolphinQt2/Settings.h"
 
+#include "InputCommon/ControllerInterface/ControllerInterface.h"
+
 MainWindow::MainWindow() : QMainWindow(nullptr)
 {
-  setWindowTitle(tr("Dolphin"));
+  setWindowTitle(QString::fromStdString(scm_rev_str));
   setWindowIcon(QIcon(Resources::GetMisc(Resources::LOGO_SMALL)));
   setUnifiedTitleAndToolBarOnMac(true);
 
   CreateComponents();
 
   ConnectGameList();
-  ConnectPathsDialog();
   ConnectToolBar();
   ConnectRenderWidget();
   ConnectStack();
   ConnectMenuBar();
+
+  InitControllers();
 }
 
 MainWindow::~MainWindow()
 {
   m_render_widget->deleteLater();
+  ShutdownControllers();
+}
+
+void MainWindow::InitControllers()
+{
+  if (g_controller_interface.IsInit())
+    return;
+
+  g_controller_interface.Initialize(reinterpret_cast<void*>(winId()));
+  Pad::Initialize();
+  Keyboard::Initialize();
+  Wiimote::Initialize(Wiimote::InitializeMode::DO_NOT_WAIT_FOR_WIIMOTES);
+  HotkeyManagerEmu::Initialize();
+}
+
+void MainWindow::ShutdownControllers()
+{
+  g_controller_interface.Shutdown();
+  Pad::Shutdown();
+  Keyboard::Shutdown();
+  Wiimote::Shutdown();
+  HotkeyManagerEmu::Shutdown();
 }
 
 void MainWindow::CreateComponents()
@@ -50,7 +83,7 @@ void MainWindow::CreateComponents()
   m_game_list = new GameList(this);
   m_render_widget = new RenderWidget;
   m_stack = new QStackedWidget(this);
-  m_paths_dialog = new PathDialog(this);
+  m_controllers_window = new ControllersWindow(this);
   m_settings_window = new SettingsWindow(this);
 }
 
@@ -83,11 +116,18 @@ void MainWindow::ConnectMenuBar()
   // View
   connect(m_menu_bar, &MenuBar::ShowTable, m_game_list, &GameList::SetTableView);
   connect(m_menu_bar, &MenuBar::ShowList, m_game_list, &GameList::SetListView);
+  connect(m_menu_bar, &MenuBar::ColumnVisibilityToggled, m_game_list,
+          &GameList::OnColumnVisibilityToggled);
   connect(m_menu_bar, &MenuBar::ShowAboutDialog, this, &MainWindow::ShowAboutDialog);
 
   connect(this, &MainWindow::EmulationStarted, m_menu_bar, &MenuBar::EmulationStarted);
   connect(this, &MainWindow::EmulationPaused, m_menu_bar, &MenuBar::EmulationPaused);
   connect(this, &MainWindow::EmulationStopped, m_menu_bar, &MenuBar::EmulationStopped);
+
+  connect(this, &MainWindow::EmulationStarted, this,
+          [=]() { m_controllers_window->OnEmulationStateChanged(true); });
+  connect(this, &MainWindow::EmulationStopped, this,
+          [=]() { m_controllers_window->OnEmulationStateChanged(false); });
 }
 
 void MainWindow::ConnectToolBar()
@@ -99,8 +139,8 @@ void MainWindow::ConnectToolBar()
   connect(m_tool_bar, &ToolBar::StopPressed, this, &MainWindow::Stop);
   connect(m_tool_bar, &ToolBar::FullScreenPressed, this, &MainWindow::FullScreen);
   connect(m_tool_bar, &ToolBar::ScreenShotPressed, this, &MainWindow::ScreenShot);
-  connect(m_tool_bar, &ToolBar::PathsPressed, this, &MainWindow::ShowPathsDialog);
   connect(m_tool_bar, &ToolBar::SettingsPressed, this, &MainWindow::ShowSettingsWindow);
+  connect(m_tool_bar, &ToolBar::ControllersPressed, this, &MainWindow::ShowControllersWindow);
 
   connect(this, &MainWindow::EmulationStarted, m_tool_bar, &ToolBar::EmulationStarted);
   connect(this, &MainWindow::EmulationPaused, m_tool_bar, &ToolBar::EmulationPaused);
@@ -125,12 +165,6 @@ void MainWindow::ConnectStack()
   m_stack->setMinimumSize(800, 600);
   m_stack->addWidget(m_game_list);
   setCentralWidget(m_stack);
-}
-
-void MainWindow::ConnectPathsDialog()
-{
-  connect(m_paths_dialog, &PathDialog::PathAdded, m_game_list, &GameList::DirectoryAdded);
-  connect(m_paths_dialog, &PathDialog::PathRemoved, m_game_list, &GameList::DirectoryRemoved);
 }
 
 void MainWindow::Open()
@@ -164,18 +198,14 @@ void MainWindow::Play()
     }
     else
     {
-      QString default_path = Settings().GetDefaultGame();
+      QString default_path = Settings::Instance().GetDefaultGame();
       if (!default_path.isEmpty() && QFile::exists(default_path))
       {
         StartGame(default_path);
       }
       else
       {
-        QString last_path = Settings().GetLastGame();
-        if (!last_path.isEmpty() && QFile::exists(last_path))
-          StartGame(last_path);
-        else
-          Open();
+        Open();
       }
     }
   }
@@ -190,7 +220,7 @@ void MainWindow::Pause()
 bool MainWindow::Stop()
 {
   bool stop = true;
-  if (Settings().GetConfirmStop())
+  if (Settings::Instance().GetConfirmStop())
   {
     // We could pause the game here and resume it if they say no.
     QMessageBox::StandardButton confirm;
@@ -257,12 +287,11 @@ void MainWindow::StartGame(const QString& path)
       return;
   }
   // Boot up, show an error if it fails to load the game.
-  if (!BootManager::BootCore(path.toStdString()))
+  if (!BootManager::BootCore(path.toStdString(), SConfig::BOOT_DEFAULT))
   {
     QMessageBox::critical(this, tr("Error"), tr("Failed to init core"), QMessageBox::Ok);
     return;
   }
-  Settings().SetLastGame(path);
   ShowRenderWidget();
   emit EmulationStarted();
 
@@ -276,7 +305,7 @@ void MainWindow::StartGame(const QString& path)
 
 void MainWindow::ShowRenderWidget()
 {
-  Settings settings;
+  auto& settings = Settings::Instance();
   if (settings.GetRenderToMain())
   {
     // If we're rendering to main, add it to the stack and update our title when necessary.
@@ -310,16 +339,16 @@ void MainWindow::HideRenderWidget()
     m_render_widget->setParent(nullptr);
     m_rendering_to_main = false;
     disconnect(Host::GetInstance(), &Host::RequestTitle, this, &MainWindow::setWindowTitle);
-    setWindowTitle(tr("Dolphin"));
+    setWindowTitle(QString::fromStdString(scm_rev_str));
   }
   m_render_widget->hide();
 }
 
-void MainWindow::ShowPathsDialog()
+void MainWindow::ShowControllersWindow()
 {
-  m_paths_dialog->show();
-  m_paths_dialog->raise();
-  m_paths_dialog->activateWindow();
+  m_controllers_window->show();
+  m_controllers_window->raise();
+  m_controllers_window->activateWindow();
 }
 
 void MainWindow::ShowSettingsWindow()
@@ -388,6 +417,6 @@ void MainWindow::StateSaveOldest()
 
 void MainWindow::SetStateSlot(int slot)
 {
-  Settings().SetStateSlot(slot);
+  Settings::Instance().SetStateSlot(slot);
   m_state_slot = slot;
 }

@@ -5,6 +5,7 @@
 #pragma once
 
 #include <limits>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
@@ -14,11 +15,13 @@
 #include "Common/NonCopyable.h"
 #include "Core/HW/EXI/EXI_Device.h"
 #include "Core/HW/SI/SI_Device.h"
+#include "Core/TitleDatabase.h"
 
 namespace DiscIO
 {
 enum class Language;
 enum class Region;
+struct Partition;
 class IVolume;
 }
 namespace IOS
@@ -33,6 +36,7 @@ class TMDReader;
 #define BACKEND_NULLSOUND _trans("No audio output")
 #define BACKEND_ALSA "ALSA"
 #define BACKEND_COREAUDIO "CoreAudio"
+#define BACKEND_CUBEB "Cubeb"
 #define BACKEND_OPENAL "OpenAL"
 #define BACKEND_PULSEAUDIO "Pulse"
 #define BACKEND_XAUDIO2 "XAudio2"
@@ -55,9 +59,6 @@ struct SConfig : NonCopyable
   bool m_WiimoteContinuousScanning;
   bool m_WiimoteEnableSpeaker;
 
-  // name of the last used filename
-  std::string m_LastFilename;
-
   // ISO folder
   std::vector<std::string> m_ISOFolder;
   bool m_RecursiveISOFolder;
@@ -73,9 +74,8 @@ struct SConfig : NonCopyable
   bool bAutomaticStart = false;
   bool bBootToPause = false;
 
-  int iCPUCore;
+  int iCPUCore;  // Uses the values of PowerPC::CPUCore
 
-  // JIT (shared between JIT and JITIL)
   bool bJITNoBlockCache = false;
   bool bJITNoBlockLinking = false;
   bool bJITOff = false;
@@ -90,8 +90,6 @@ struct SConfig : NonCopyable
   bool bJITPairedOff = false;
   bool bJITSystemRegistersOff = false;
   bool bJITBranchOff = false;
-  bool bJITILTimeProfiling = false;
-  bool bJITILOutputIR = false;
 
   bool bFastmem;
   bool bFPRF = false;
@@ -134,7 +132,7 @@ struct SConfig : NonCopyable
 
   // Interface settings
   bool bConfirmStop = false;
-  bool bHideCursor = false, bAutoHideCursor = false;
+  bool bHideCursor = false;
   bool bUsePanicHandlers = true;
   bool bOnScreenDisplayMessages = true;
   std::string theme_name;
@@ -223,14 +221,16 @@ struct SConfig : NonCopyable
   std::string m_perfDir;
 
   const std::string& GetGameID() const { return m_game_id; }
+  const std::string& GetTitleDescription() const { return m_title_description; }
   u64 GetTitleID() const { return m_title_id; }
   u16 GetRevision() const { return m_revision; }
   void ResetRunningGameMetadata();
-  void SetRunningGameMetadata(const DiscIO::IVolume& volume);
+  void SetRunningGameMetadata(const DiscIO::IVolume& volume, const DiscIO::Partition& partition);
   void SetRunningGameMetadata(const IOS::ES::TMDReader& tmd);
 
   void LoadDefaults();
   static const char* GetDirectoryForRegion(DiscIO::Region region);
+  std::string GetBootROMPath(const std::string& region_directory) const;
   bool AutoSetup(EBootBS2 _BootBS2);
   void CheckMemcardPath(std::string& memcardPath, const std::string& gameRegion, bool isSlotA);
   DiscIO::Language GetCurrentLanguage(bool wii) const;
@@ -239,11 +239,12 @@ struct SConfig : NonCopyable
   IniFile LoadLocalGameIni() const;
   IniFile LoadGameIni() const;
 
-  static IniFile LoadDefaultGameIni(const std::string& id, u16 revision);
-  static IniFile LoadLocalGameIni(const std::string& id, u16 revision);
-  static IniFile LoadGameIni(const std::string& id, u16 revision);
+  static IniFile LoadDefaultGameIni(const std::string& id, std::optional<u16> revision);
+  static IniFile LoadLocalGameIni(const std::string& id, std::optional<u16> revision);
+  static IniFile LoadGameIni(const std::string& id, std::optional<u16> revision);
 
-  static std::vector<std::string> GetGameIniFilenames(const std::string& id, u16 revision);
+  static std::vector<std::string> GetGameIniFilenames(const std::string& id,
+                                                      std::optional<u16> revision);
 
   std::string m_NANDPath;
   std::string m_DumpPath;
@@ -267,6 +268,7 @@ struct SConfig : NonCopyable
   bool m_InterfaceLogWindow;
   bool m_InterfaceLogConfigWindow;
   bool m_InterfaceExtendedFPSInfo;
+  bool m_show_active_title = false;
 
   bool m_ListDrives;
   bool m_ListWad;
@@ -293,6 +295,7 @@ struct SConfig : NonCopyable
   // Game list column toggles
   bool m_showSystemColumn;
   bool m_showBannerColumn;
+  bool m_showDescriptionColumn;
   bool m_showTitleColumn;
   bool m_showMakerColumn;
   bool m_showFileNameColumn;
@@ -369,7 +372,6 @@ private:
   void SaveAnalyticsSettings(IniFile& ini);
   void SaveBluetoothPassthroughSettings(IniFile& ini);
   void SaveUSBPassthroughSettings(IniFile& ini);
-  void SaveSysconfSettings(IniFile& ini);
 
   void LoadGeneralSettings(IniFile& ini);
   void LoadInterfaceSettings(IniFile& ini);
@@ -384,14 +386,15 @@ private:
   void LoadAnalyticsSettings(IniFile& ini);
   void LoadBluetoothPassthroughSettings(IniFile& ini);
   void LoadUSBPassthroughSettings(IniFile& ini);
-  void LoadSysconfSettings(IniFile& ini);
 
-  void SetRunningGameMetadata(const std::string& game_id, u64 title_id, u16 revision);
+  void SetRunningGameMetadata(const std::string& game_id, u64 title_id, u16 revision,
+                              Core::TitleDatabase::TitleType type);
   bool SetRegion(DiscIO::Region region, std::string* directory_name);
 
   static SConfig* m_Instance;
 
   std::string m_game_id;
+  std::string m_title_description;
   u64 m_title_id;
   u16 m_revision;
 };

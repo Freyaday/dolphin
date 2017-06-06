@@ -24,7 +24,6 @@ namespace DiscIO
 enum class Region;
 
 // TODO: move some of these to Core/IOS/ES.
-bool AddTicket(const IOS::ES::TicketReader& signed_ticket);
 IOS::ES::TicketReader FindSignedTicket(u64 title_id);
 
 class CNANDContentData
@@ -75,11 +74,10 @@ struct SNANDContent
 class CNANDContentLoader final
 {
 public:
-  explicit CNANDContentLoader(const std::string& content_name);
+  explicit CNANDContentLoader(const std::string& content_name, Common::FromWhichRoot from);
   ~CNANDContentLoader();
 
   bool IsValid() const;
-  void RemoveTitle() const;
   const SNANDContent* GetContentByID(u32 id) const;
   const SNANDContent* GetContentByIndex(int index) const;
   const IOS::ES::TMDReader& GetTMD() const { return m_tmd; }
@@ -91,6 +89,7 @@ private:
 
   bool m_Valid = false;
   bool m_IsWAD = false;
+  Common::FromWhichRoot m_root;
   std::string m_Path;
   IOS::ES::TMDReader m_tmd;
   IOS::ES::TicketReader m_ticket;
@@ -107,11 +106,12 @@ public:
     static CNANDContentManager instance;
     return instance;
   }
-  u64 Install_WiiWAD(const std::string& fileName);
 
-  const CNANDContentLoader& GetNANDLoader(const std::string& content_path);
-  const CNANDContentLoader& GetNANDLoader(u64 title_id, Common::FromWhichRoot from);
-  bool RemoveTitle(u64 title_id, Common::FromWhichRoot from);
+  const CNANDContentLoader&
+  GetNANDLoader(const std::string& content_path,
+                Common::FromWhichRoot from = Common::FROM_CONFIGURED_ROOT);
+  const CNANDContentLoader&
+  GetNANDLoader(u64 title_id, Common::FromWhichRoot from = Common::FROM_CONFIGURED_ROOT);
   void ClearCache();
 
 private:

@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <map>
+#include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -13,10 +15,16 @@
 #include "Common/ColorUtil.h"
 #include "Common/CommonTypes.h"
 #include "Common/FileUtil.h"
+#include "Common/NandPaths.h"
 #include "Common/StringUtil.h"
 #include "Common/Swap.h"
 
+#include "DiscIO/Blob.h"
 #include "DiscIO/Enums.h"
+#include "DiscIO/VolumeDirectory.h"
+#include "DiscIO/VolumeGC.h"
+#include "DiscIO/VolumeWad.h"
+#include "DiscIO/VolumeWiiCrypted.h"
 
 namespace DiscIO
 {
@@ -25,14 +33,16 @@ static const unsigned int WII_BANNER_HEIGHT = 64;
 static const unsigned int WII_BANNER_SIZE = WII_BANNER_WIDTH * WII_BANNER_HEIGHT * 2;
 static const unsigned int WII_BANNER_OFFSET = 0xA0;
 
+const IOS::ES::TicketReader IVolume::INVALID_TICKET{};
+const IOS::ES::TMDReader IVolume::INVALID_TMD{};
+
 std::vector<u32> IVolume::GetWiiBanner(int* width, int* height, u64 title_id)
 {
   *width = 0;
   *height = 0;
 
-  std::string file_name = StringFromFormat("%s/title/%08x/%08x/data/banner.bin",
-                                           File::GetUserPath(D_WIIROOT_IDX).c_str(),
-                                           (u32)(title_id >> 32), (u32)title_id);
+  const std::string file_name =
+      Common::GetTitleDataPath(title_id, Common::FROM_CONFIGURED_ROOT) + "banner.bin";
   if (!File::Exists(file_name))
     return std::vector<u32>();
 
@@ -76,4 +86,47 @@ std::map<Language, std::string> IVolume::ReadWiiNames(const std::vector<u8>& dat
   }
   return names;
 }
+
+std::unique_ptr<IVolume> CreateVolumeFromFilename(const std::string& filename)
+{
+  std::unique_ptr<IBlobReader> reader(CreateBlobReader(filename));
+  if (reader == nullptr)
+    return nullptr;
+
+  // Check for Wii
+  const std::optional<u32> wii_magic = reader->ReadSwapped<u32>(0x18);
+  if (wii_magic == u32(0x5D1C9EA3))
+  {
+    const std::optional<u32> wii_container_magic = reader->ReadSwapped<u32>(0x60);
+    if (wii_container_magic == u32(0))
+      return std::make_unique<CVolumeWiiCrypted>(std::move(reader));
+
+    return std::make_unique<CVolumeGC>(std::move(reader));
+  }
+
+  // Check for WAD
+  // 0x206962 for boot2 wads
+  const std::optional<u32> wad_magic = reader->ReadSwapped<u32>(0x02);
+  if (wad_magic == u32(0x00204973) || wad_magic == u32(0x00206962))
+    return std::make_unique<CVolumeWAD>(std::move(reader));
+
+  // Check for GC
+  const std::optional<u32> gc_magic = reader->ReadSwapped<u32>(0x1C);
+  if (gc_magic == u32(0xC2339F3D))
+    return std::make_unique<CVolumeGC>(std::move(reader));
+
+  // No known magic words found
+  return nullptr;
 }
+
+std::unique_ptr<IVolume> CreateVolumeFromDirectory(const std::string& directory, bool is_wii,
+                                                   const std::string& apploader,
+                                                   const std::string& dol)
+{
+  if (CVolumeDirectory::IsValidDirectory(directory))
+    return std::make_unique<CVolumeDirectory>(directory, is_wii, apploader, dol);
+
+  return nullptr;
+}
+
+}  // namespace

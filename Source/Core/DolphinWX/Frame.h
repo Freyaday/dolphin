@@ -17,6 +17,7 @@
 
 #include "Common/CommonTypes.h"
 #include "Common/Event.h"
+#include "Core/ConfigManager.h"
 #include "DolphinWX/Globals.h"
 
 #if defined(HAVE_X11) && HAVE_X11
@@ -183,6 +184,9 @@ private:
   void InitializeTASDialogs();
   void InitializeCoreCallbacks();
 
+  void StartGame(const std::string& filename, SConfig::EBootBS2 type = SConfig::BOOT_DEFAULT);
+  void SetDebuggerStartupParameters() const;
+
   // Utility
   wxWindow* GetNotebookPageFromId(wxWindowID Id);
   wxAuiNotebook* GetNotebookFromId(u32 NBId);
@@ -308,7 +312,6 @@ private:
   void OnConfigHotkey(wxCommandEvent& event);
 
   void OnToggleFullscreen(wxCommandEvent& event);
-  void OnToggleDualCore(wxCommandEvent& event);
   void OnManagerResize(wxAuiManagerEvent& event);
   void OnMove(wxMoveEvent& event);
   void OnResize(wxSizeEvent& event);
@@ -325,6 +328,10 @@ private:
   void OnImportSave(wxCommandEvent& event);
   void OnExportAllSaves(wxCommandEvent& event);
 
+  void OnLoadGameCubeIPLJAP(wxCommandEvent& event);
+  void OnLoadGameCubeIPLUSA(wxCommandEvent& event);
+  void OnLoadGameCubeIPLEUR(wxCommandEvent& event);
+
   void OnNetPlay(wxCommandEvent& event);
 
   void OnShowCheatsWindow(wxCommandEvent& event);
@@ -339,7 +346,6 @@ private:
 
   void OnGameListCtrlItemActivated(wxListEvent& event);
   void OnRenderParentResize(wxSizeEvent& event);
-  void StartGame(const std::string& filename);
   void OnChangeColumnsVisible(wxCommandEvent& event);
 
   void OnSelectSlot(wxCommandEvent& event);

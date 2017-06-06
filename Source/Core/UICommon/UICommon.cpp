@@ -7,10 +7,12 @@
 #endif
 
 #include "Common/CommonPaths.h"
+#include "Common/Config/Config.h"
 #include "Common/FileUtil.h"
 #include "Common/Logging/LogManager.h"
 #include "Common/MsgHandler.h"
 
+#include "Core/ConfigLoaders/BaseConfigLoader.h"
 #include "Core/ConfigManager.h"
 #include "Core/HW/Wiimote.h"
 
@@ -26,6 +28,8 @@ namespace UICommon
 void Init()
 {
   LogManager::Init();
+  Config::Init();
+  Config::AddLoadLayer(ConfigLoaders::GenerateBaseConfigLoader());
   SConfig::Init();
   VideoBackendBase::PopulateList();
   WiimoteReal::LoadSettings();
@@ -41,6 +45,7 @@ void Shutdown()
   WiimoteReal::Shutdown();
   VideoBackendBase::ClearList();
   SConfig::Shutdown();
+  Config::Shutdown();
   LogManager::Shutdown();
 }
 
@@ -195,6 +200,29 @@ void SetUserDirectory(const std::string& custom_path)
   }
 #endif
   File::SetUserPath(D_USER_IDX, user_path);
+}
+
+void SaveWiimoteSources()
+{
+  std::string ini_filename = File::GetUserPath(D_CONFIG_IDX) + WIIMOTE_INI_NAME ".ini";
+
+  IniFile inifile;
+  inifile.Load(ini_filename);
+
+  for (unsigned int i = 0; i < MAX_WIIMOTES; ++i)
+  {
+    std::string secname("Wiimote");
+    secname += (char)('1' + i);
+    IniFile::Section& sec = *inifile.GetOrCreateSection(secname);
+
+    sec.Set("Source", (int)g_wiimote_sources[i]);
+  }
+
+  std::string secname("BalanceBoard");
+  IniFile::Section& sec = *inifile.GetOrCreateSection(secname);
+  sec.Set("Source", (int)g_wiimote_sources[WIIMOTE_BALANCE_BOARD]);
+
+  inifile.Save(ini_filename);
 }
 
 }  // namespace UICommon

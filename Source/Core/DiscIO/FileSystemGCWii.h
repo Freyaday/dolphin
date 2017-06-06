@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -14,11 +15,12 @@
 namespace DiscIO
 {
 class IVolume;
+struct Partition;
 
 class CFileSystemGCWii : public IFileSystem
 {
 public:
-  CFileSystemGCWii(const IVolume* _rVolume);
+  CFileSystemGCWii(const IVolume* _rVolume, const Partition& partition);
   virtual ~CFileSystemGCWii();
 
   bool IsValid() const override { return m_Valid; }
@@ -30,13 +32,13 @@ public:
   bool ExportFile(const std::string& _rFullPath, const std::string& _rExportFilename) override;
   bool ExportApploader(const std::string& _rExportFolder) const override;
   bool ExportDOL(const std::string& _rExportFolder) const override;
-  u64 GetBootDOLOffset() const override;
-  u32 GetBootDOLSize(u64 dol_offset) const override;
+  std::optional<u64> GetBootDOLOffset() const override;
+  std::optional<u32> GetBootDOLSize(u64 dol_offset) const override;
 
 private:
   bool m_Initialized;
   bool m_Valid;
-  bool m_Wii;
+  u32 m_offset_shift;
   std::vector<SFileInfo> m_FileInfoVector;
 
   std::string GetStringFromOffset(u64 _Offset) const;
@@ -45,7 +47,6 @@ private:
   void InitFileSystem();
   size_t BuildFilenames(const size_t _FirstIndex, const size_t _LastIndex,
                         const std::string& _szDirectory, u64 _NameTableOffset);
-  u32 GetOffsetShift() const;
 };
 
 }  // namespace

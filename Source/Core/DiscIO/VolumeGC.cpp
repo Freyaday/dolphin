@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -32,21 +33,21 @@ CVolumeGC::~CVolumeGC()
 {
 }
 
-bool CVolumeGC::Read(u64 _Offset, u64 _Length, u8* _pBuffer, bool decrypt) const
+bool CVolumeGC::Read(u64 _Offset, u64 _Length, u8* _pBuffer, const Partition& partition) const
 {
-  if (decrypt)
-    PanicAlertT("Tried to decrypt data from a non-Wii volume");
+  if (partition != PARTITION_NONE)
+    return false;
 
   return m_pReader->Read(_Offset, _Length, _pBuffer);
 }
 
-std::string CVolumeGC::GetGameID() const
+std::string CVolumeGC::GetGameID(const Partition& partition) const
 {
   static const std::string NO_UID("NO_UID");
 
   char ID[6];
 
-  if (!Read(0, sizeof(ID), reinterpret_cast<u8*>(ID)))
+  if (!Read(0, sizeof(ID), reinterpret_cast<u8*>(ID), partition))
   {
     PanicAlertT("Failed to read unique ID from disc image");
     return NO_UID;
@@ -57,44 +58,35 @@ std::string CVolumeGC::GetGameID() const
 
 Region CVolumeGC::GetRegion() const
 {
-  u8 country_code;
-  if (!ReadSwapped(3, &country_code, false))
-    return Region::UNKNOWN_REGION;
-
-  return RegionSwitchGC(country_code);
+  const std::optional<u8> country_code = ReadSwapped<u8>(3, PARTITION_NONE);
+  return country_code ? RegionSwitchGC(*country_code) : Region::UNKNOWN_REGION;
 }
 
-Country CVolumeGC::GetCountry() const
+Country CVolumeGC::GetCountry(const Partition& partition) const
 {
-  u8 country_code;
-  if (!ReadSwapped(3, &country_code, false))
-    return Country::COUNTRY_UNKNOWN;
-
-  return CountrySwitch(country_code);
+  const std::optional<u8> country_code = ReadSwapped<u8>(3, partition);
+  return country_code ? CountrySwitch(*country_code) : Country::COUNTRY_UNKNOWN;
 }
 
-std::string CVolumeGC::GetMakerID() const
+std::string CVolumeGC::GetMakerID(const Partition& partition) const
 {
   char makerID[2];
-  if (!Read(0x4, 0x2, (u8*)&makerID))
+  if (!Read(0x4, 0x2, (u8*)&makerID, partition))
     return std::string();
 
   return DecodeString(makerID);
 }
 
-u16 CVolumeGC::GetRevision() const
+std::optional<u16> CVolumeGC::GetRevision(const Partition& partition) const
 {
-  u8 revision;
-  if (!ReadSwapped(7, &revision, false))
-    return 0;
-
-  return revision;
+  std::optional<u8> revision = ReadSwapped<u8>(7, partition);
+  return revision ? *revision : std::optional<u16>();
 }
 
-std::string CVolumeGC::GetInternalName() const
+std::string CVolumeGC::GetInternalName(const Partition& partition) const
 {
   char name[0x60];
-  if (Read(0x20, 0x60, (u8*)name))
+  if (Read(0x20, 0x60, (u8*)name, partition))
     return DecodeString(name);
 
   return "";
@@ -138,19 +130,10 @@ std::vector<u32> CVolumeGC::GetBanner(int* width, int* height) const
   return m_image_buffer;
 }
 
-u64 CVolumeGC::GetFSTSize() const
-{
-  u32 size;
-  if (!Read(0x428, 0x4, (u8*)&size))
-    return 0;
-
-  return Common::swap32(size);
-}
-
-std::string CVolumeGC::GetApploaderDate() const
+std::string CVolumeGC::GetApploaderDate(const Partition& partition) const
 {
   char date[16];
-  if (!Read(0x2440, 0x10, (u8*)&date))
+  if (!Read(0x2440, 0x10, (u8*)&date, partition))
     return std::string();
 
   return DecodeString(date);
@@ -171,11 +154,9 @@ u64 CVolumeGC::GetRawSize() const
   return m_pReader->GetRawSize();
 }
 
-u8 CVolumeGC::GetDiscNumber() const
+std::optional<u8> CVolumeGC::GetDiscNumber(const Partition& partition) const
 {
-  u8 disc_number = 0;
-  ReadSwapped(6, &disc_number, false);
-  return disc_number;
+  return ReadSwapped<u8>(6, partition);
 }
 
 Platform CVolumeGC::GetVolumeType() const
@@ -192,9 +173,11 @@ void CVolumeGC::LoadBannerFile() const
   m_banner_loaded = true;
 
   GCBanner banner_file;
-  std::unique_ptr<IFileSystem> file_system(CreateFileSystem(this));
-  size_t file_size = (size_t)file_system->GetFileSize("opening.bnr");
+  std::unique_ptr<IFileSystem> file_system(CreateFileSystem(this, PARTITION_NONE));
+  if (!file_system)
+    return;
 
+  size_t file_size = static_cast<size_t>(file_system->GetFileSize("opening.bnr"));
   constexpr int BNR1_MAGIC = 0x31524e42;
   constexpr int BNR2_MAGIC = 0x32524e42;
   if (file_size != BNR1_SIZE && file_size != BNR2_SIZE)

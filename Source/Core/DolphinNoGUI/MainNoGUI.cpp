@@ -115,13 +115,6 @@ void Host_RequestRenderWindowSize(int width, int height)
 {
 }
 
-void Host_SetStartupDebuggingParameters()
-{
-  SConfig& StartUp = SConfig::GetInstance();
-  StartUp.bEnableDebugging = false;
-  StartUp.bBootToPause = false;
-}
-
 bool Host_UIHasFocus()
 {
   return false;
@@ -370,7 +363,7 @@ class PlatformX11 : public Platform
 
 static Platform* GetPlatform()
 {
-#if defined(USE_EGL) && defined(USE_HEADLESS)
+#if defined(USE_HEADLESS)
   return new Platform();
 #elif HAVE_X11
   return new PlatformX11();
@@ -429,7 +422,7 @@ int main(int argc, char* argv[])
 
   DolphinAnalytics::Instance()->ReportDolphinStart("nogui");
 
-  if (!BootManager::BootCore(boot_filename))
+  if (!BootManager::BootCore(boot_filename, SConfig::BOOT_DEFAULT))
   {
     fprintf(stderr, "Could not boot %s\n", boot_filename.c_str());
     return 1;

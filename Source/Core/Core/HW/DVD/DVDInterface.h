@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -13,6 +14,7 @@ class PointerWrap;
 namespace DiscIO
 {
 class IVolume;
+struct Partition;
 }
 namespace MMIO
 {
@@ -108,18 +110,20 @@ void DoState(PointerWrap& p);
 
 void RegisterMMIO(MMIO::Mapping* mmio, u32 base);
 
-// Disc access (don't call GetVolume unless you know that IsDiscInside() == true)
-const DiscIO::IVolume& GetVolume();
-bool SetVolumeName(const std::string& disc_path);
-bool SetVolumeDirectory(const std::string& disc_path, bool is_wii,
-                        const std::string& apploader_path = "", const std::string& DOL_path = "");
+void SetDisc(std::unique_ptr<DiscIO::IVolume> disc);
 bool IsDiscInside();
 void ChangeDiscAsHost(const std::string& new_path);  // Can only be called by the host thread
 void ChangeDiscAsCPU(const std::string& new_path);   // Can only be called by the CPU thread
 
+// This function returns true and calls SConfig::SetRunningGameMetadata(IVolume&, Partition&)
+// if both of the following conditions are true:
+// - A disc is inserted
+// - The title_id argument doesn't contain a value, or its value matches the disc's title ID
+bool UpdateRunningGameMetadata(std::optional<u64> title_id = {});
+
 // Direct access to DI for IOS HLE (simpler to implement than how real IOS accesses DI,
 // and lets us skip encrypting/decrypting in some cases)
-bool ChangePartition(u64 offset);
+void ChangePartition(const DiscIO::Partition& partition);
 void ExecuteCommand(u32 command_0, u32 command_1, u32 command_2, u32 output_address,
                     u32 output_length, bool reply_to_ios);
 

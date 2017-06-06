@@ -8,6 +8,7 @@
 #include <locale>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -64,8 +65,10 @@ bool CVolumeDirectory::IsValidDirectory(const std::string& directory)
   return File::IsDirectory(ExtractDirectoryName(directory));
 }
 
-bool CVolumeDirectory::Read(u64 offset, u64 length, u8* buffer, bool decrypt) const
+bool CVolumeDirectory::Read(u64 offset, u64 length, u8* buffer, const Partition& partition) const
 {
+  bool decrypt = partition != PARTITION_NONE;
+
   if (!decrypt && (offset + length >= 0x400) && m_is_wii)
   {
     // Fully supporting this would require re-encrypting every file that's read.
@@ -77,7 +80,7 @@ bool CVolumeDirectory::Read(u64 offset, u64 length, u8* buffer, bool decrypt) co
   }
 
   if (decrypt && !m_is_wii)
-    PanicAlertT("Tried to decrypt data from a non-Wii volume");
+    return false;
 
   // header
   if (offset < DISKHEADERINFO_ADDRESS)
@@ -157,7 +160,17 @@ bool CVolumeDirectory::Read(u64 offset, u64 length, u8* buffer, bool decrypt) co
   return true;
 }
 
-std::string CVolumeDirectory::GetGameID() const
+std::vector<Partition> CVolumeDirectory::GetPartitions() const
+{
+  return m_is_wii ? std::vector<Partition>{GetGamePartition()} : std::vector<Partition>();
+}
+
+Partition CVolumeDirectory::GetGamePartition() const
+{
+  return m_is_wii ? Partition(0x50000) : PARTITION_NONE;
+}
+
+std::string CVolumeDirectory::GetGameID(const Partition& partition) const
 {
   return std::string(m_disk_header.begin(), m_disk_header.begin() + MAX_ID_LENGTH);
 }
@@ -175,21 +188,21 @@ Region CVolumeDirectory::GetRegion() const
   return RegionSwitchGC(m_disk_header[3]);
 }
 
-Country CVolumeDirectory::GetCountry() const
+Country CVolumeDirectory::GetCountry(const Partition& partition) const
 {
   return CountrySwitch(m_disk_header[3]);
 }
 
-std::string CVolumeDirectory::GetMakerID() const
+std::string CVolumeDirectory::GetMakerID(const Partition& partition) const
 {
   // Not implemented
   return "00";
 }
 
-std::string CVolumeDirectory::GetInternalName() const
+std::string CVolumeDirectory::GetInternalName(const Partition& partition) const
 {
   char name[0x60];
-  if (Read(0x20, 0x60, (u8*)name, false))
+  if (Read(0x20, 0x60, (u8*)name, partition))
     return DecodeString(name);
   else
     return "";
@@ -199,7 +212,7 @@ std::map<Language, std::string> CVolumeDirectory::GetLongNames() const
 {
   std::string name = GetInternalName();
   if (name.empty())
-    return {{}};
+    return {};
   return {{Language::LANGUAGE_UNKNOWN, name}};
 }
 
@@ -218,13 +231,7 @@ void CVolumeDirectory::SetName(const std::string& name)
   m_disk_header[length + 0x20] = 0;
 }
 
-u64 CVolumeDirectory::GetFSTSize() const
-{
-  // Not implemented
-  return 0;
-}
-
-std::string CVolumeDirectory::GetApploaderDate() const
+std::string CVolumeDirectory::GetApploaderDate(const Partition& partition) const
 {
   // Not implemented
   return "VOID";

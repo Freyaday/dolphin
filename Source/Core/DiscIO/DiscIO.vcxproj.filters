@@ -1,5 +1,5 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
-<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Filter Include="DiscScrubber">
       <UniqueIdentifier>{3873659a-9a30-4a58-af9e-8dad7d7eb627}</UniqueIdentifier>
@@ -53,9 +53,6 @@
     </ClCompile>
     <ClCompile Include="WbfsBlob.cpp">
       <Filter>Volume\Blob</Filter>
-    </ClCompile>
-    <ClCompile Include="VolumeCreator.cpp">
-      <Filter>Volume</Filter>
     </ClCompile>
     <ClCompile Include="VolumeDirectory.cpp">
       <Filter>Volume</Filter>
@@ -117,9 +114,6 @@
       <Filter>Volume\Blob</Filter>
     </ClInclude>
     <ClInclude Include="Volume.h">
-      <Filter>Volume</Filter>
-    </ClInclude>
-    <ClInclude Include="VolumeCreator.h">
       <Filter>Volume</Filter>
     </ClInclude>
     <ClInclude Include="VolumeDirectory.h">

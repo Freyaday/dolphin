@@ -23,15 +23,17 @@
 #include "Common/FileUtil.h"
 #include "Common/Hash.h"
 #include "Common/IniFile.h"
+#include "Common/NandPaths.h"
 #include "Common/StringUtil.h"
 
 #include "Core/Boot/Boot.h"
 #include "Core/ConfigManager.h"
+#include "Core/IOS/ES/Formats.h"
+#include "Core/TitleDatabase.h"
 
 #include "DiscIO/Blob.h"
 #include "DiscIO/Enums.h"
 #include "DiscIO/Volume.h"
-#include "DiscIO/VolumeCreator.h"
 
 #include "DolphinWX/ISOFile.h"
 #include "DolphinWX/WxUtils.h"
@@ -61,8 +63,7 @@ static std::string GetLanguageString(DiscIO::Language language,
   return "";
 }
 
-GameListItem::GameListItem(const std::string& _rFileName,
-                           const std::unordered_map<std::string, std::string>& custom_titles)
+GameListItem::GameListItem(const std::string& _rFileName, const Core::TitleDatabase& title_database)
     : m_FileName(_rFileName), m_title_id(0), m_emu_state(0), m_FileSize(0),
       m_region(DiscIO::Region::UNKNOWN_REGION), m_Country(DiscIO::Country::COUNTRY_UNKNOWN),
       m_Revision(0), m_Valid(false), m_ImageWidth(0), m_ImageHeight(0), m_disc_number(0),
@@ -107,9 +108,9 @@ GameListItem::GameListItem(const std::string& _rFileName,
       m_VolumeSize = volume->GetSize();
 
       m_game_id = volume->GetGameID();
-      volume->GetTitleID(&m_title_id);
-      m_disc_number = volume->GetDiscNumber();
-      m_Revision = volume->GetRevision();
+      m_title_id = volume->GetTitleID().value_or(0);
+      m_disc_number = volume->GetDiscNumber().value_or(0);
+      m_Revision = volume->GetRevision().value_or(0);
 
       std::vector<u32> buffer = volume->GetBanner(&m_ImageWidth, &m_ImageHeight);
       ReadVolumeBanner(buffer, m_ImageWidth, m_ImageHeight);
@@ -124,18 +125,10 @@ GameListItem::GameListItem(const std::string& _rFileName,
 
   if (IsValid())
   {
-    std::string short_game_id = m_game_id;
-
-    // Ignore publisher ID for WAD files
-    if (m_Platform == DiscIO::Platform::WII_WAD && short_game_id.size() > 4)
-      short_game_id.erase(4);
-
-    auto it = custom_titles.find(short_game_id);
-    if (it != custom_titles.end())
-    {
-      m_custom_name_titles_txt = it->second;
-    }
-
+    const auto type = m_Platform == DiscIO::Platform::WII_WAD ?
+                          Core::TitleDatabase::TitleType::Channel :
+                          Core::TitleDatabase::TitleType::Other;
+    m_custom_name_titles_txt = title_database.GetTitleName(m_game_id, type);
     ReloadINI();
   }
 
@@ -174,6 +167,17 @@ GameListItem::GameListItem(const std::string& _rFileName,
 
 GameListItem::~GameListItem()
 {
+}
+
+bool GameListItem::IsValid() const
+{
+  if (!m_Valid)
+    return false;
+
+  if (m_Platform == DiscIO::Platform::WII_WAD && !IOS::ES::IsChannel(m_title_id))
+    return false;
+
+  return true;
 }
 
 void GameListItem::ReloadINI()
@@ -360,29 +364,13 @@ std::vector<DiscIO::Language> GameListItem::GetLanguages() const
 
 const std::string GameListItem::GetWiiFSPath() const
 {
-  std::unique_ptr<DiscIO::IVolume> iso(DiscIO::CreateVolumeFromFilename(m_FileName));
-  std::string ret;
+  if (m_Platform != DiscIO::Platform::WII_DISC && m_Platform != DiscIO::Platform::WII_WAD)
+    return "";
 
-  if (iso == nullptr)
-    return ret;
+  const std::string path = Common::GetTitleDataPath(m_title_id, Common::FROM_CONFIGURED_ROOT);
 
-  if (iso->GetVolumeType() != DiscIO::Platform::GAMECUBE_DISC)
-  {
-    u64 title_id = 0;
-    iso->GetTitleID(&title_id);
+  if (path[0] == '.')
+    return WxStrToStr(wxGetCwd()) + path.substr(strlen(ROOT_DIR));
 
-    const std::string path =
-        StringFromFormat("%s/title/%08x/%08x/data/", File::GetUserPath(D_WIIROOT_IDX).c_str(),
-                         (u32)(title_id >> 32), (u32)title_id);
-
-    if (!File::Exists(path))
-      File::CreateFullPath(path);
-
-    if (path[0] == '.')
-      ret = WxStrToStr(wxGetCwd()) + path.substr(strlen(ROOT_DIR));
-    else
-      ret = path;
-  }
-
-  return ret;
+  return path;
 }

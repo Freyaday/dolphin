@@ -57,11 +57,15 @@ static const SPatch OSPatches[] = {
     // This needs to be put before vprintf (because vprintf is called indirectly by this)
     {"JUTWarningConsole_f",          HLE_OS::HLE_GeneralDebugPrint,         HLE_HOOK_START,   HLE_TYPE_DEBUG},
 
-    {"OSReport",                     HLE_OS::HLE_GeneralDebugPrint,         HLE_HOOK_REPLACE,   HLE_TYPE_DEBUG}, // apploader needs OSReport replace hook
+    {"OSReport",                     HLE_OS::HLE_GeneralDebugPrint,         HLE_HOOK_START,   HLE_TYPE_DEBUG},
     {"DEBUGPrint",                   HLE_OS::HLE_GeneralDebugPrint,         HLE_HOOK_START,   HLE_TYPE_DEBUG},
     {"WUD_DEBUGPrint",               HLE_OS::HLE_GeneralDebugPrint,         HLE_HOOK_START,   HLE_TYPE_DEBUG},
-    {"vprintf",                      HLE_OS::HLE_GeneralDebugPrint,         HLE_HOOK_START,   HLE_TYPE_DEBUG},
+    {"vprintf",                      HLE_OS::HLE_GeneralDebugVPrint,        HLE_HOOK_START,   HLE_TYPE_DEBUG},
     {"printf",                       HLE_OS::HLE_GeneralDebugPrint,         HLE_HOOK_START,   HLE_TYPE_DEBUG},
+    {"vdprintf",                     HLE_OS::HLE_LogVDPrint,                HLE_HOOK_START,   HLE_TYPE_DEBUG},
+    {"dprintf",                      HLE_OS::HLE_LogDPrint,                 HLE_HOOK_START,   HLE_TYPE_DEBUG},
+    {"vfprintf",                     HLE_OS::HLE_LogVFPrint,                HLE_HOOK_START,   HLE_TYPE_DEBUG},
+    {"fprintf",                      HLE_OS::HLE_LogFPrint,                 HLE_HOOK_START,   HLE_TYPE_DEBUG},
     {"nlPrintf",                     HLE_OS::HLE_GeneralDebugPrint,         HLE_HOOK_START,   HLE_TYPE_DEBUG},
     {"puts",                         HLE_OS::HLE_GeneralDebugPrint,         HLE_HOOK_START,   HLE_TYPE_DEBUG}, // gcc-optimized printf?
     {"___blank",                     HLE_OS::HLE_GeneralDebugPrint,         HLE_HOOK_START,   HLE_TYPE_DEBUG}, // used for early init things (normally)
@@ -69,6 +73,7 @@ static const SPatch OSPatches[] = {
 
     {"GeckoCodehandler",             HLE_Misc::GeckoCodeHandlerICacheFlush, HLE_HOOK_START,   HLE_TYPE_FIXED},
     {"GeckoHandlerReturnTrampoline", HLE_Misc::GeckoReturnTrampoline,       HLE_HOOK_REPLACE, HLE_TYPE_FIXED},
+    {"AppLoaderReport",              HLE_OS::HLE_GeneralDebugPrint,         HLE_HOOK_REPLACE, HLE_TYPE_FIXED} // apploader needs OSReport-like function
 };
 
 static const SPatch OSBreakPoints[] = {

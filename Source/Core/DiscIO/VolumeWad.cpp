@@ -7,6 +7,7 @@
 #include <locale>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -29,11 +30,11 @@ CVolumeWAD::CVolumeWAD(std::unique_ptr<IBlobReader> reader) : m_reader(std::move
   _assert_(m_reader);
 
   // Source: http://wiibrew.org/wiki/WAD_files
-  ReadSwapped(0x00, &m_hdr_size, false);
-  ReadSwapped(0x08, &m_cert_size, false);
-  ReadSwapped(0x10, &m_tick_size, false);
-  ReadSwapped(0x14, &m_tmd_size, false);
-  ReadSwapped(0x18, &m_data_size, false);
+  m_hdr_size = m_reader->ReadSwapped<u32>(0x00).value_or(0);
+  m_cert_size = m_reader->ReadSwapped<u32>(0x08).value_or(0);
+  m_tick_size = m_reader->ReadSwapped<u32>(0x10).value_or(0);
+  m_tmd_size = m_reader->ReadSwapped<u32>(0x14).value_or(0);
+  m_data_size = m_reader->ReadSwapped<u32>(0x18).value_or(0);
 
   m_offset = Common::AlignUp(m_hdr_size, 0x40) + Common::AlignUp(m_cert_size, 0x40);
   m_tmd_offset = Common::AlignUp(m_hdr_size, 0x40) + Common::AlignUp(m_cert_size, 0x40) +
@@ -41,14 +42,14 @@ CVolumeWAD::CVolumeWAD(std::unique_ptr<IBlobReader> reader) : m_reader(std::move
   m_opening_bnr_offset =
       m_tmd_offset + Common::AlignUp(m_tmd_size, 0x40) + Common::AlignUp(m_data_size, 0x40);
 
-  if (m_tmd_size > 1024 * 1024 * 4)
+  if (!IOS::ES::IsValidTMDSize(m_tmd_size))
   {
     ERROR_LOG(DISCIO, "TMD is too large: %u bytes", m_tmd_size);
     return;
   }
 
   std::vector<u8> tmd_buffer(m_tmd_size);
-  Read(m_tmd_offset, m_tmd_size, tmd_buffer.data(), false);
+  Read(m_tmd_offset, m_tmd_size, tmd_buffer.data());
   m_tmd.SetBytes(std::move(tmd_buffer));
 }
 
@@ -56,10 +57,10 @@ CVolumeWAD::~CVolumeWAD()
 {
 }
 
-bool CVolumeWAD::Read(u64 offset, u64 length, u8* buffer, bool decrypt) const
+bool CVolumeWAD::Read(u64 offset, u64 length, u8* buffer, const Partition& partition) const
 {
-  if (decrypt)
-    PanicAlertT("Tried to decrypt data from a non-Wii volume");
+  if (partition != PARTITION_NONE)
+    return false;
 
   return m_reader->Read(offset, length, buffer);
 }
@@ -71,7 +72,7 @@ Region CVolumeWAD::GetRegion() const
   return m_tmd.GetRegion();
 }
 
-Country CVolumeWAD::GetCountry() const
+Country CVolumeWAD::GetCountry(const Partition& partition) const
 {
   if (!m_tmd.IsValid())
     return Country::COUNTRY_UNKNOWN;
@@ -83,20 +84,20 @@ Country CVolumeWAD::GetCountry() const
   return CountrySwitch(country_code);
 }
 
-IOS::ES::TMDReader CVolumeWAD::GetTMD() const
+const IOS::ES::TMDReader& CVolumeWAD::GetTMD(const Partition& partition) const
 {
   return m_tmd;
 }
 
-std::string CVolumeWAD::GetGameID() const
+std::string CVolumeWAD::GetGameID(const Partition& partition) const
 {
   return m_tmd.GetGameID();
 }
 
-std::string CVolumeWAD::GetMakerID() const
+std::string CVolumeWAD::GetMakerID(const Partition& partition) const
 {
   char temp[2];
-  if (!Read(0x198 + m_tmd_offset, 2, (u8*)temp))
+  if (!Read(0x198 + m_tmd_offset, 2, (u8*)temp, partition))
     return "00";
 
   // Some weird channels use 0x0000 in place of the MakerID, so we need a check here
@@ -107,15 +108,15 @@ std::string CVolumeWAD::GetMakerID() const
   return DecodeString(temp);
 }
 
-bool CVolumeWAD::GetTitleID(u64* buffer) const
+std::optional<u64> CVolumeWAD::GetTitleID(const Partition& partition) const
 {
-  return ReadSwapped(m_offset + 0x01DC, buffer, false);
+  return ReadSwapped<u64>(m_offset + 0x01DC, partition);
 }
 
-u16 CVolumeWAD::GetRevision() const
+std::optional<u16> CVolumeWAD::GetRevision(const Partition& partition) const
 {
   if (!m_tmd.IsValid())
-    return 0;
+    return {};
 
   return m_tmd.GetTitleVersion();
 }
@@ -141,11 +142,11 @@ std::vector<u32> CVolumeWAD::GetBanner(int* width, int* height) const
   *width = 0;
   *height = 0;
 
-  u64 title_id;
-  if (!GetTitleID(&title_id))
+  const std::optional<u64> title_id = GetTitleID();
+  if (!title_id)
     return std::vector<u32>();
 
-  return GetWiiBanner(width, height, title_id);
+  return GetWiiBanner(width, height, *title_id);
 }
 
 BlobType CVolumeWAD::GetBlobType() const
